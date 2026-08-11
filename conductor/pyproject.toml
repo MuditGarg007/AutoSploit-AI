@@ -1,0 +1,33 @@
+[project]
+name = "autosploit-conductor"
+version = "0.1.0"
+description = "Autosploit conductor — owns one engagement end to end: provision, launch the harness, collect the report, tear down (see docs/conductor.md)"
+readme = "README.md"
+authors = [
+    { name = "Mudit Garg", email = "muditgarg.456@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "autosploit-harness",
+    "autosploit-provisioner",
+]
+
+[project.scripts]
+conductor = "autosploit_conductor.cli:main"
+
+[tool.uv.sources]
+autosploit-harness = { path = "../harness", editable = true }
+autosploit-provisioner = { path = "../provisioner", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.2",
+]

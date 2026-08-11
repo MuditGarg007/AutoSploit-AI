@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets — never commit (clone tokens live in env only, docs/provisioner.md §8)
+.env
+
+# Provision artifacts (workdirs, emitted scopes, manifests)
+out/
+runs/
+
+.commandcode

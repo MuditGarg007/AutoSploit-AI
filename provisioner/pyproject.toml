@@ -1,0 +1,39 @@
+[project]
+name = "autosploit-provisioner"
+version = "0.1.0"
+description = "Autosploit target provisioner — turns a repo ref into a running target + a frozen scope the harness consumes, then tears it down (see docs/provisioner.md)"
+readme = "README.md"
+authors = [
+    { name = "Mudit Garg", email = "muditgarg.456@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0.3",
+    "docker>=7.1.0",
+    # Frozen seam: import load_scope + ScopeAllowlist from the harness so the
+    # scope file we emit is validated by the exact parser that consumes it
+    # (docs/provisioner.md §3). Path dep, not published — sibling in this repo.
+    "autosploit-harness",
+]
+
+[project.scripts]
+provision = "autosploit_provisioner.cli:main"
+
+[tool.uv.sources]
+autosploit-harness = { path = "../harness", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+markers = [
+    "integration: needs a Docker daemon (booter/discovery/teardown, M3+)",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.2",
+]

@@ -1,0 +1,19 @@
+{
+  "engagement_id": "c6final",
+  "finished_at": "2026-08-10T18:26:31Z",
+  "harness": {
+    "exit_code": 2,
+    "halt_reason": "token cap reached (2068239/2000000)",
+    "report_path": "C:\\Users\\Mudit Garg\\Desktop\\autosploit\\conductor\\.c6-runs\\c6final\\runs\\20260810T182104Z\\report.json",
+    "status": "partial"
+  },
+  "provision": {
+    "error": null,
+    "exit_code": 0,
+    "ok": true
+  },
+  "repo_ref": "https://github.com/juice-shop/juice-shop.git",
+  "report_path": "C:\\Users\\Mudit Garg\\Desktop\\autosploit\\conductor\\.c6-runs\\c6final\\runs\\20260810T182104Z\\report.json",
+  "started_at": "2026-08-10T18:20:37Z",
+  "status": "partial"
+}
