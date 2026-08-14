@@ -1,0 +1,18 @@
+# Node / Bun workspace
+node_modules/
+dist/
+coverage/
+*.log
+.turbo/
+
+# Env — NEVER commit secrets
+.env
+.env.*
+!.env.example
+
+# Python siblings (harness / provisioner / conductor)
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+*.pyc

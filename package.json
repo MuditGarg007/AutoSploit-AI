@@ -1,0 +1,24 @@
+{
+  "name": "autosploit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Autosploit monorepo — client + control plane, Bun workspaces + Turborepo (docs/control-plane.md §9.1). Bun is the package manager + workspace tool only; the runtime stays Node 22.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "bun@1.1.0",
+  "workspaces": [
+    "control-plane",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0"
+  }
+}

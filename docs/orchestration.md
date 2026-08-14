@@ -73,7 +73,11 @@ that already existed — nothing is added for its own sake.
 - **Firecracker / Kata microVMs** — real, but overkill here; gVisor gives the
   "real isolation" story at drop-in cost.
 - **Istio / service mesh** — no cross-service traffic management need.
-- **Kafka** — the event stream is SSE/WS from harness to control plane, not a bus.
+- **Kafka** — *(superseded — see `control-plane.md §8.2, §9.1)`.* Held true while the
+  event stream had a single consumer (SSE). The control plane later gives it multiple
+  independent consumers (SSE bridge, Postgres projector, S3 sink, audit, quota), which
+  **is** the bus requirement — so Kafka (Redpanda) is adopted there. The rejection was
+  correct for the narrower requirement; the requirement grew.
 - **ArgoCD / GitOps** — engagements are imperative, ephemeral jobs, not declarative
   desired-state to reconcile.
 

@@ -1,0 +1,2 @@
+# Auth Guards (docs/control-plane.md §9.1): session guard, ownership guard.
+# Guards = auth boundary; they live here because they are cross-cutting, not per-slice.

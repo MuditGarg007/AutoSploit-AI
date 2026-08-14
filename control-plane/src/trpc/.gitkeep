@@ -1,0 +1,3 @@
+# tRPC router (docs/control-plane.md §9.1) — type-safe REST commands across the
+# monorepo, bridged via nestjs-trpc. SSE stays a raw Nest route, NOT a tRPC
+# subscription. Populated from P1 onward as slices expose commands.

@@ -1,0 +1,3 @@
+# Interceptors (docs/control-plane.md §5, §9.1): quota enforcement + telemetry.
+# Quota is cross-cutting middleware, NOT a slice — it enforces at C's dispatch off
+# running totals aggregated by D's Kafka Streams consumer. Lives here.
