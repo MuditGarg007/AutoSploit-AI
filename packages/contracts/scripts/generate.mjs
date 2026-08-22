@@ -32,6 +32,37 @@ function toTsType(hint, indent) {
   return nullable ? `${base} | null` : base;
 }
 
+/**
+ * Resolve a schema type hint to its JSON Schema type keyword (draft 2020-12).
+ * "integer" maps to the integer keyword so ajv distinguishes it from "number";
+ * every other primitive maps directly; array<string> narrows the item type.
+ */
+function toJsonSchemaType(hint) {
+  let t = hint.trim();
+  let nullable = false;
+  if (t.endsWith('|null')) {
+    nullable = true;
+    t = t.slice(0, -'|null'.length).trim();
+  }
+  let type;
+  if (t === 'string') type = 'string';
+  else if (t === 'integer') type = 'integer';
+  else if (t === 'number') type = 'number';
+  else if (t === 'boolean') type = 'boolean';
+  else if (t === 'null') type = 'null';
+  else if (t === 'object') type = 'object';
+  else if (t.startsWith('array<')) {
+    const inner = t.slice('array<'.length, -1);
+    return {
+      type: 'array',
+      items: inner === 'integer' ? { type: 'integer' } : { type: 'string' },
+    };
+  }
+  // Fallback (unknown-shaped blob): no type constraint.
+  else return {};
+  return nullable ? { type: [type, 'null'] } : { type };
+}
+
 function payloadInterface(name, payload, indent) {
   const pad = ' '.repeat(indent);
   const fields = Object.entries(payload.fields ?? {});
@@ -58,6 +89,8 @@ export function generateContractTypes(schema) {
   out.push(`// Source of truth: harness/src/autosploit_harness/contracts/ (harness.md §9 step 5).`);
   out.push('');
   out.push(`export const CONTRACT_VERSION = '${schema.contract_version}';`);
+  out.push('');
+  out.push(`export { eventSchema } from './event-schema.js';`);
   out.push('');
 
   const envelope = schema.events.envelope;
@@ -105,6 +138,68 @@ export function generateContractTypes(schema) {
   return out.join('\n');
 }
 
+/**
+ * Generate the JSON Schema module text (draft 2020-12) for a contract schema
+ * JSON object. The Schema Registry subject and the ingest ajv validator both
+ * derive from this single generated artifact, keeping the "generated, never
+ * hand-mirrored" invariant (docs/control-plane.md §8.1).
+ *
+ * Shape: a required envelope ({ts, type, data}) plus one `allOf` branch per
+ * event type — `if type === X then data requires the per-type required keys`.
+ * `halt` gets no required data keys, matching events.py `__required_keys__`.
+ */
+export function generateEventSchema(schema) {
+  const out = [];
+
+  out.push(`// Generated from harness/contracts/contract.schema.json — do not hand-edit.`);
+  out.push(`// Regenerate via \`bun run generate\` (or \`bun run generate\` in packages/contracts).`);
+  out.push(`// Draft 2020-12 JSON Schema; the ingest ajv validator and the Schema Registry`);
+  out.push(`// subject both derive from this artifact (docs/control-plane.md §8.1).`);
+  out.push('');
+
+  const payloads = schema.events.payloads;
+  const typeList = schema.events.envelope.type;
+
+  const branches = typeList.map((name) => {
+    const payload = payloads[name] ?? {};
+    const fields = payload.fields ?? {};
+    const required = payload.required ?? [];
+    const props = {};
+    for (const [key, hint] of Object.entries(fields)) {
+      props[key] = toJsonSchemaType(hint);
+    }
+    const dataSchema = { type: 'object', properties: props };
+    if (required.length > 0) dataSchema.required = required;
+    return {
+      if: { properties: { type: { const: name } }, required: ['type'] },
+      then: {
+        properties: { data: dataSchema },
+        required: ['data'],
+      },
+    };
+  });
+
+  const eventSchema = {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $id: 'https://autosploit.dev/schemas/events.json',
+    title: 'autosploit harness event',
+    type: 'object',
+    properties: {
+      ts: { type: 'string', format: 'date-time' },
+      type: { enum: typeList },
+      data: { type: 'object' },
+    },
+    required: ['ts', 'type', 'data'],
+    additionalProperties: false,
+    allOf: branches,
+  };
+
+  out.push(`export const eventSchema = ${JSON.stringify(eventSchema, null, 2)} as const;`);
+  out.push('');
+
+  return out.join('\n');
+}
+
 async function main() {
   const schemaPath = path.resolve(
     __dirname,
@@ -116,6 +211,11 @@ async function main() {
   await mkdir(path.dirname(dest), { recursive: true });
   await writeFile(dest, `${code}\n`, 'utf8');
   console.log(`Wrote ${path.relative(process.cwd(), dest)}`);
+
+  const eventSchemaCode = generateEventSchema(schema);
+  const eventSchemaDest = path.resolve(__dirname, '../src/event-schema.ts');
+  await writeFile(eventSchemaDest, `${eventSchemaCode}\n`, 'utf8');
+  console.log(`Wrote ${path.relative(process.cwd(), eventSchemaDest)}`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

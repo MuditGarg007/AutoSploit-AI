@@ -13,3 +13,5 @@ export interface HarnessContractSchema {
 }
 
 export function generateContractTypes(schema: HarnessContractSchema): string;
+
+export function generateEventSchema(schema: HarnessContractSchema): string;

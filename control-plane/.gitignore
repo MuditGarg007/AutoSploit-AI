@@ -5,3 +5,5 @@ dist/
 .env.local
 coverage/
 .turbo/
+# Testcontainers/fixture runtime artifacts (fake conductor writes here)
+test/fixtures/out/

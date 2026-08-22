@@ -12,6 +12,23 @@ export class EnvService {
   // last-mile land. Falls back to the local default so P0 dev/CI needs no fake var.
   readonly redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
 
+  // --- Lifecycle (slice C, P3) — BullMQ dispatch + conductor worker ---
+  // The conductor CLI the worker shells for Phase A; the control plane never
+  // holds OPENROUTER_API_KEY, the conductor resolves it from its own env (§6).
+  readonly conductorCmd = process.env.CONDUCTOR_CMD ?? 'conductor';
+  // Base --out dir for `conductor run`; the engagement workdir is <out>/<id> and
+  // the surviving conductor.json record lives at <out>/<id>/conductor.json.
+  readonly conductorOutDir = process.env.CONDUCTOR_OUT_DIR ?? '/tmp/autosploit-runs';
+  readonly conductorTimeoutS = Number(process.env.CONDUCTOR_TIMEOUT_S ?? 3600);
+  // Shared C(mint) <-> D(validate) signing key for per-engagement ingest tokens
+  // (§8.1). Optional at boot so pre-P3 slices (health/repos/identity) can start
+  // without it; IngestTokenService fails fast if used without a key.
+  readonly ingestTokenSigningKey = process.env.INGEST_TOKEN_SIGNING_KEY ?? '';
+  // The plane's own base URL the worker POSTs relayed events to. Defaults to the
+  // local port so P3 works without extra env; set PUBLIC_BASE_URL behind a proxy.
+  readonly publicBaseUrl =
+    process.env.PUBLIC_BASE_URL ?? `http://localhost:${this.port}`;
+
   // --- GitHub OAuth (Identity slice A, §4.A) ---
   readonly githubClientId = this.required('GITHUB_CLIENT_ID');
   readonly githubClientSecret = this.required('GITHUB_CLIENT_SECRET');
@@ -31,6 +48,23 @@ export class EnvService {
   readonly vaultAddr = process.env.VAULT_ADDR ?? 'http://localhost:8200';
   readonly vaultTransitKey = this.required('VAULT_TRANSIT_KEY');
   readonly vaultToken = process.env.VAULT_TOKEN ?? process.env.VAULT_DEV_ROOT_TOKEN_ID ?? '';
+
+  // --- Telemetry (slice D, P4) — Kafka backbone + S3 sink ---
+  // Optional-but-fail-fast-on-use (pattern: ingestTokenSigningKey): the app must
+  // boot without a broker (pre-D slices, local dev), but ingest/consumers refuse
+  // to work when the broker is unset. Empty KAFKA_BROKERS = disabled (§ plan D).
+  readonly kafkaBrokers = process.env.KAFKA_BROKERS ?? '';
+  readonly schemaRegistryUrl = process.env.SCHEMA_REGISTRY_URL ?? '';
+  readonly kafkaTopic = process.env.KAFKA_TOPIC ?? 'autosploit.events';
+  readonly kafkaClientId = process.env.KAFKA_CLIENT_ID ?? 'control-plane';
+  // Fixed partition count; key = engagement_id preserves per-engagement order.
+  readonly kafkaPartitions = 3;
+  // S3 object store (Kafka Connect S3 sink + test assertions, §8.2). The Connect
+  // worker reads these at config time; the plane itself only asserts in tests.
+  readonly s3Endpoint = process.env.S3_ENDPOINT ?? 'http://localhost:9000';
+  readonly s3Bucket = process.env.S3_BUCKET ?? 'autosploit-reports';
+  readonly s3AccessKey = process.env.S3_ACCESS_KEY ?? '';
+  readonly s3SecretKey = process.env.S3_SECRET_KEY ?? '';
 
   private required(key: string): string {
     const v = process.env[key];

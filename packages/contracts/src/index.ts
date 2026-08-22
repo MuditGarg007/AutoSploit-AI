@@ -4,6 +4,8 @@
 
 export const CONTRACT_VERSION = '1.0.0';
 
+export { eventSchema } from './event-schema.js';
+
 export const EVENT_TYPES = ['phase', 'tool_call', 'tool_result', 'finding', 'cost', 'refusal', 'halt'] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

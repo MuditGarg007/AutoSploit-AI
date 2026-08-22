@@ -39,6 +39,7 @@ describe('migrations apply from clean', () => {
 
     expect(tables).toEqual(
       [
+        'audit_log',
         'cost',
         'engagements',
         'findings',

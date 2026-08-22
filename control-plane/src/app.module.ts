@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from './config/config.module.js';
 import { DrizzleModule } from './db/drizzle.module.js';
+import { RedisModule } from './redis/redis.module.js';
 import { HealthModule } from './core/health/health.module.js';
 import { IdentityModule } from './domains/identity/identity.module.js';
 import { ReposModule } from './domains/repos/repos.module.js';
@@ -16,6 +17,7 @@ import { ReportsModule } from './domains/reports/reports.module.js';
   imports: [
     ConfigModule,
     DrizzleModule,
+    RedisModule,
     HealthModule,
     IdentityModule, // A · Identity  — users, sessions, github_tokens
     ReposModule, // B · Repos     — repo_cache

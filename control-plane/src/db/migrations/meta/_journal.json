@@ -15,6 +15,13 @@
       "when": 1786703834682,
       "tag": "0001_fuzzy_reavers",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787208342592,
+      "tag": "0002_dark_harpoon",
+      "breakpoints": true
     }
   ]
 }

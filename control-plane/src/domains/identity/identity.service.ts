@@ -143,6 +143,20 @@ export class IdentityService {
     await this.db.delete(sessions).where(eq(sessions.id, sessionId));
   }
 
+  // A→B/C boundary: hands out the user's decrypted GitHub token (plaintext) to
+  // slices that legitimately need it — B (picker) and C (dispatch). Reading the
+  // vault entry still goes through A alone; no other slice queries github_tokens
+  // (docs/control-plane.md §4.A, §5 rule 1).
+  async getGithubToken(userId: string): Promise<string | null> {
+    const row = await this.db
+      .select()
+      .from(githubTokens)
+      .where(eq(githubTokens.userId, userId))
+      .limit(1);
+    if (!row[0]) return null;
+    return this.vault.decrypt(row[0].ciphertext);
+  }
+
   async getUserBySession(sessionId: string): Promise<SessionUser | null> {
     const row = await this.db
       .select({ user: users })

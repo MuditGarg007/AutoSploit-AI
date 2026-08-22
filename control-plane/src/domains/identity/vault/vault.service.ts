@@ -75,9 +75,9 @@ export class VaultService implements OnModuleInit {
     return `${VAULT_PREFIX}${data.ciphertext}`;
   }
 
-  // Decrypt vault:v1: ciphertext. Called ONLY by Lifecycle (C) at dispatch to
-  // hand the GitHub token to the provisioner env for clone — never logged, never
-  // to the harness (§6 secret split).
+  // Decrypt vault:v1: ciphertext. Reached via IdentityService.getGithubToken by
+  // B (picker reads) and Lifecycle (C) at dispatch — handed to the provisioner
+  // env for clone, never logged, never to the harness (§6 secret split).
   async decrypt(ciphertext: string): Promise<string> {
     const stored = ciphertext.startsWith(VAULT_PREFIX)
       ? ciphertext.slice(VAULT_PREFIX.length)

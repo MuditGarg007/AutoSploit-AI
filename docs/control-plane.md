@@ -421,7 +421,7 @@ top once C and D exist.
 - **Scope.** The core write path and system of record for engagements. Create → queue →
   run → terminal → teardown. **Sole writer of `engagements`** — replaces `conductor.json`.
 - **Details.**
-  - **Dispatch** (`POST /engagements`): validate ownership + deployable, enforce quota
+  - **Dispatch** (`POST /engagements`): validate ownership + deployable, enforce quota/
     hook, write row `queued`, mint per-engagement ingest token, decrypt GitHub token for
     the job, enqueue on BullMQ.
   - **Worker**: dequeue → shell `conductor run <repo> --engagement-id <id>` (Phase A
