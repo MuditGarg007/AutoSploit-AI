@@ -1,0 +1,12 @@
+# Juice Shop eval target (docs/harness.md §8).
+#
+# Brings up the scored target on a local network:
+#   - app + db (OWASP Juice Shop: modern JS app, many vuln classes, documented
+#     solutions to score against — §0).
+#   - firewall / network rules so the attacker container reaches the target only,
+#     default-deny everything else — fakes the §4.1 egress locking (the sandbox
+#     firewall that enforces run_shell's network scope, §3).
+#
+# Placeholder — service definitions to be filled in at build step 1 (§9).
+# `docker compose up` here + a hardcoded scope YAML (configs/scope.juiceshop.yaml)
+# = the standalone rig the driver runs against.

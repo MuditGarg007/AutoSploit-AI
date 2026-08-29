@@ -1,0 +1,20 @@
+# Eval-rig config — flash-only sweep vs local Juice Shop (docs/harness.md §8, §9 step 4).
+# No fallbacks: the eval measures ONE model per run so the scorecard attributes
+# tool-call success + exploit score to that model, not a silent failover.
+# Needs OPENROUTER_API_KEY in the environment.
+
+[model]
+id = "deepseek/deepseek-v4-flash"
+reasoning = "high"
+fallbacks = []
+
+[budget]
+max_usd = 1.0
+max_tokens = 1_000_000
+max_tool_calls = 80
+
+[target]
+scope_file = "scope.juiceshop.yaml"
+
+[output]
+dir = "runs"

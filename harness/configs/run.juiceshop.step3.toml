@@ -1,0 +1,19 @@
+# Step-3 gateway-hardening proof — short cap, real metering + fallback list.
+# Same target/scope as the live run; small tool-call cap to keep it fast + cheap.
+# Needs OPENROUTER_API_KEY in the environment.
+
+[model]
+id = "deepseek/deepseek-v4-flash"
+reasoning = "high"
+fallbacks = ["moonshotai/kimi-k2", "z-ai/glm-4.6"]
+
+[budget]
+max_usd = 1.0
+max_tokens = 1_000_000
+max_tool_calls = 6
+
+[target]
+scope_file = "scope.juiceshop.yaml"
+
+[output]
+dir = "runs"

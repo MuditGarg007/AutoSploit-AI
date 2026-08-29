@@ -1,0 +1,19 @@
+# Live run — DeepSeek V4 Flash vs local Juice Shop (docs/harness.md §8, §9 step 1).
+# First real end-to-end: real model, real target, budget-bounded.
+# Needs OPENROUTER_API_KEY in the environment.
+
+[model]
+id = "deepseek/deepseek-v4-flash"
+reasoning = "high"
+fallbacks = ["moonshotai/kimi-k2", "z-ai/glm-4.6"]
+
+[budget]
+max_usd = 2.0
+max_tokens = 1_000_000
+max_tool_calls = 25          # bound the first live run
+
+[target]
+scope_file = "scope.juiceshop.yaml"
+
+[output]
+dir = "runs"

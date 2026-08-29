@@ -1,0 +1,36 @@
+[project]
+name = "autosploit-harness"
+version = "0.1.0"
+description = "Autosploit attack engine harness — LangGraph agent loop with a deterministic fail-closed interceptor (see docs/harness.md)"
+readme = "README.md"
+authors = [
+    { name = "Mudit Garg", email = "muditgarg.456@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "langchain-openai>=1.4.2",
+    "langgraph>=1.2.10",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+autosploit-harness = "autosploit_harness.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+# The eval rig lives outside the package (eval/, not src/) — it CONSUMES the
+# driver's output (docs/harness.md §8). Put it on the path so tests import its
+# modules (score/metrics/solutions/sweep) as top-level names, same as the driver
+# does at runtime via eval/cli.py's sys.path insert.
+pythonpath = ["src", "eval"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.2",
+]

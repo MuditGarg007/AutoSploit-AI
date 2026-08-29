@@ -1,0 +1,13 @@
+# Scope allowlist — Juice Shop (docs/harness.md §1, §3).
+#
+# Hardcoded target IP + ports. Fakes what the provisioner emits later; the FORMAT
+# is a frozen seam (§9), so the provisioner drops in without reshaping it.
+# Loaded by driver/config.py into the ScopeAllowlist frozen dataclass
+# (contracts/scope.py), read by the interceptor to allow/deny http_request
+# targets (§3). Shell scope is NOT here — that's the sandbox firewall's job.
+#
+# Juice Shop's docker one-liner exposes the app on 3000:
+#   docker run --rm -p 3000:3000 bkimminich/juice-shop
+target:
+  host: 127.0.0.1
+  ports: [3000]

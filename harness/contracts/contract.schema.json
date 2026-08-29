@@ -1,0 +1,185 @@
+{
+  "contract_version": "1.0.0",
+  "driver": {
+    "run": "run(config_path: 'Path') -> 'Report'",
+    "run_engagement": "run_engagement(*, model, scope: 'ScopeAllowlist', budget: 'BudgetState', emitter: 'JsonlEmitter', ledger: 'Ledger', objective: 'str' = 'Begin the engagement. Recon the target in scope, identify vulnerabilities, and exploit what you can. Report what you find.') -> 'tuple[Report, dict]'"
+  },
+  "events": {
+    "envelope": {
+      "data": "object (per-type payload below)",
+      "ts": "string (ISO-8601 UTC)",
+      "type": [
+        "phase",
+        "tool_call",
+        "tool_result",
+        "finding",
+        "cost",
+        "refusal",
+        "halt"
+      ]
+    },
+    "payloads": {
+      "cost": {
+        "fields": {
+          "caps": "object",
+          "tokens": "integer",
+          "tool_calls": "integer",
+          "turn": "object",
+          "usd": "number"
+        },
+        "required": [
+          "caps",
+          "tokens",
+          "tool_calls",
+          "usd"
+        ]
+      },
+      "finding": {
+        "fields": {
+          "evidence": "string",
+          "id": "string",
+          "repro": "string",
+          "severity": "string",
+          "title": "string"
+        },
+        "required": [
+          "evidence",
+          "id",
+          "repro",
+          "severity",
+          "title"
+        ]
+      },
+      "halt": {
+        "fields": {
+          "caps": "object",
+          "cause": "string",
+          "reason": "string",
+          "stage": "string",
+          "tokens": "integer",
+          "tool_calls": "integer",
+          "usd": "number"
+        },
+        "required": []
+      },
+      "phase": {
+        "fields": {
+          "attempt": "integer",
+          "cause": "string",
+          "host": "string",
+          "nudges": "integer",
+          "ports": "array",
+          "reasoning": "string",
+          "stage": "string",
+          "summary": "string"
+        },
+        "required": [
+          "stage"
+        ]
+      },
+      "refusal": {
+        "fields": {
+          "model": "string|null",
+          "reason": "string"
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "tool_call": {
+        "fields": {
+          "args": "object",
+          "id": "string|null",
+          "name": "string"
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "tool_result": {
+        "fields": {
+          "error": "string",
+          "id": "string|null",
+          "is_error": "boolean",
+          "name": "string|null",
+          "truncated": "boolean"
+        },
+        "required": [
+          "id",
+          "is_error",
+          "name"
+        ]
+      }
+    }
+  },
+  "generated_by": "autosploit_harness.contracts.export.build_contract",
+  "note": "Frozen cross-language seam (docs/harness.md \u00a79 step 5). Generated from the Python shapes; do not hand-edit. Regenerate via `autosploit-harness contract`.",
+  "report": {
+    "attempts": "integer",
+    "budget": "object",
+    "completed": "boolean",
+    "findings": "array",
+    "halt_reason": "string|null",
+    "summary": "string|null",
+    "tool_results": "integer",
+    "turns": "integer"
+  },
+  "results": {
+    "CompleteResult": {
+      "summary": "string"
+    },
+    "FindingId": {
+      "id": "string",
+      "severity": "string",
+      "title": "string"
+    },
+    "HttpResult": {
+      "body": "string",
+      "error": "string|null",
+      "headers": "object",
+      "method": "string",
+      "status": "integer",
+      "truncated": "boolean",
+      "url": "string"
+    },
+    "ShellResult": {
+      "cmd": "string",
+      "exit_code": "integer",
+      "stderr": "string",
+      "stdout": "string",
+      "timed_out": "boolean",
+      "truncated": "boolean"
+    }
+  },
+  "run_config": {
+    "format": "toml",
+    "shape": {
+      "budget": {
+        "max_tokens": "integer",
+        "max_tool_calls": "integer",
+        "max_usd": "number"
+      },
+      "model": {
+        "fallbacks": "array<string>",
+        "id": "string",
+        "reasoning": "string|null"
+      },
+      "output": {
+        "dir": "string (path, relative to run.toml)"
+      },
+      "target": {
+        "scope_file": "string (path, relative to run.toml)"
+      }
+    }
+  },
+  "scope_file": {
+    "format": "yaml",
+    "shape": {
+      "target": {
+        "host": "string",
+        "ports": "array<integer>"
+      }
+    }
+  }
+}
