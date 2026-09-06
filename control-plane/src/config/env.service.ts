@@ -59,12 +59,18 @@ export class EnvService {
   readonly kafkaClientId = process.env.KAFKA_CLIENT_ID ?? 'control-plane';
   // Fixed partition count; key = engagement_id preserves per-engagement order.
   readonly kafkaPartitions = 3;
-  // S3 object store (Kafka Connect S3 sink + test assertions, §8.2). The Connect
-  // worker reads these at config time; the plane itself only asserts in tests.
+  // S3 object store (Kafka Connect S3 sink writes archives; Reports slice E reads
+  // artifacts + mints presigned download URLs, §8.2, §4.E). The Connect worker
+  // reads these at config time; Reports's own S3 client reads them at boot.
+  // Empty S3_ACCESS_KEY = object store disabled (pre-E slices, local dev): the
+  // Reports provider yields a null client and presigned URLs come back null.
   readonly s3Endpoint = process.env.S3_ENDPOINT ?? 'http://localhost:9000';
   readonly s3Bucket = process.env.S3_BUCKET ?? 'autosploit-reports';
   readonly s3AccessKey = process.env.S3_ACCESS_KEY ?? '';
   readonly s3SecretKey = process.env.S3_SECRET_KEY ?? '';
+  // TTL (seconds) of the presigned artifact download URLs the report serves.
+  // Short by default — the URL is minted per request, not stored (§4.E).
+  readonly reportUrlTtlS = Number(process.env.REPORT_URL_TTL_S ?? 15 * 60);
 
   private required(key: string): string {
     const v = process.env[key];
