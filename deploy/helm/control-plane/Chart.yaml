@@ -1,0 +1,11 @@
+apiVersion: v2
+name: control-plane
+description: Autosploit control plane — the long-lived NestJS app + BullMQ worker.
+# This is the PLANE's own chart (docs/component-h-hardening.md §3.5). The
+# ephemeral per-engagement chart (namespace, attacker/target Pods, NetworkPolicy)
+# is owned by the orchestration layer; these are two disjoint workloads with
+# disjoint lifecycles and are intentionally two charts, not one.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.24"

@@ -10,6 +10,7 @@ import {
 import { SessionGuard } from '../../core/guards/session.guard.js';
 import { CurrentUser } from '../../core/guards/current-user.decorator.js';
 import type { AuthenticatedUser } from '../../core/guards/session.guard.js';
+import { EnforceQuota } from '../../core/quota/enforce-quota.decorator.js';
 import { LifecycleService } from './lifecycle.service.js';
 import { EngagementWorker } from './worker/engagement.worker.js';
 
@@ -30,6 +31,7 @@ export class LifecycleController {
 
   @Post()
   @UseGuards(SessionGuard)
+  @EnforceQuota()
   create(@CurrentUser() auth: AuthenticatedUser, @Body() body: CreateEngagementDto) {
     return this.lifecycle.dispatch({
       userId: auth.id,

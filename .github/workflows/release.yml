@@ -1,0 +1,113 @@
+name: Release
+
+# Component H release path (docs/component-h-hardening.md §8.4): build + scan the
+# control-plane image, push to GHCR, run the reduced red-team pass against an
+# ephemeral kind cluster, then deploy to GKE via Helm (manual approval before prod).
+# Runs on tags (v*) and on pushes to main; the deploy step is gated by an
+# environment with an approval rule.
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write # push to GHCR
+  id-token: write # OIDC to authenticate to GKE
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository_owner }}/control-plane
+  GKE_CLUSTER: autosploit-demo
+  GKE_REGION: us-central1
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        run: docker build -t $IMAGE:$GITHUB_SHA -t $IMAGE:latest ./control-plane
+
+      - name: Scan image (Trivy) — fail on high/critical
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: $IMAGE:$GITHUB_SHA
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+
+      - name: Leak scan (model key must never be in the image)
+        run: |
+          docker run --rm --entrypoint sh $IMAGE:$GITHUB_SHA -c \
+            'grep -rIs "OPENROUTER_API_KEY" / 2>/dev/null | grep -v "^Binary" || true' \
+            | tee /tmp/leaks.txt
+          if [ -s /tmp/leaks.txt ]; then
+            echo "❌ Image leak scan found references:"; cat /tmp/leaks.txt; exit 1
+          fi
+          echo "✅ no OPENROUTER_API_KEY reference in image"
+
+      - name: Push image
+        run: docker push $IMAGE:$GITHUB_SHA && docker push $IMAGE:latest
+
+  redteam-kind:
+    runs-on: ubuntu-latest
+    needs: build-push
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.1.0 }
+      - name: Install kind
+        run: |
+          curl -Lo kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+          chmod +x kind && sudo mv kind /usr/local/bin/
+      - name: Create cluster
+        run: kind create cluster --name autosploit-cicd
+      - name: Reduced red-team pass
+        run: ./scripts/redteam.sh --namespace default --ingest-token "${{ secrets.INGEST_TOKEN_SIGNING_KEY }}"
+
+  deploy-gke:
+    runs-on: ubuntu-latest
+    needs: [build-push, redteam-kind]
+    # Gate prod deploys behind a manual approval environment.
+    environment: production
+    concurrency: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Auth to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/autosploit/providers/github
+          service_account: autosploit-plane-github@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_REGION }}
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install control-plane ./deploy/helm/control-plane \
+            --namespace default \
+            --set image.tag=$GITHUB_SHA \
+            --set image.repository=$IMAGE
+
+      - name: Full red-team pass on GKE (release gate)
+        run: |
+          # Wait for rollout, then run the full §7 pass against the real
+          # NetworkPolicy + ingest.
+          kubectl rollout status deployment/control-plane-control-plane-app --timeout=300s
+          INGEST_TOKEN="${{ secrets.INGEST_TOKEN_SIGNING_KEY }}" \
+            ./scripts/redteam.sh --namespace default

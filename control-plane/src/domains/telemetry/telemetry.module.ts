@@ -10,6 +10,7 @@ import { ProjectorConsumer } from './consumers/projector.consumer.js';
 import { SseBridgeConsumer } from './consumers/sse-bridge.consumer.js';
 import { AuditConsumer } from './consumers/audit.consumer.js';
 import {
+  KAFKA,
   kafkaProvider,
   kafkaProducerProvider,
   kafkaAdminProvider,
@@ -41,6 +42,8 @@ import { TelemetryConsumerLifecycle } from './kafka/telemetry-consumer.lifecycle
     ProjectorConsumer, // topic → findings / cost projections — D-b
     AuditConsumer, // topic → immutable tool-call trail — D-b
   ],
-  exports: [EventSchemaService],
+  // Exports shared infra for the cross-cutting Quota layer (Component Q, P6):
+  // the Kafka client + consumer lifecycle that its aggregator group reuses.
+  exports: [EventSchemaService, KAFKA, TelemetryConsumerLifecycle],
 })
 export class TelemetryModule {}

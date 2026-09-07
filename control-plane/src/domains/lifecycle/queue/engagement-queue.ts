@@ -16,6 +16,11 @@ export interface EngagementJobData {
   githubToken: string;
   ingestToken: string;
   timeoutS: number;
+  // W3C traceparent of the dispatch span, carried on the job so the async hop
+  // from HTTP dispatch to worker execution stays in one trace
+  // (docs/component-h-hardening.md §6.2). Additive — absent on jobs enqueued
+  // before H; the worker opens a standalone span when it is missing.
+  traceparent?: string;
 }
 
 export const ENGAGEMENT_QUEUE = Symbol('ENGAGEMENT_QUEUE');

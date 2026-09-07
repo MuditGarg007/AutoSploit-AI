@@ -4,10 +4,12 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, notInArray } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
+import { trace } from '@opentelemetry/api';
 import { DRIZZLE, type Db } from '../../db/drizzle.module.js';
 import { EnvService } from '../../config/env.service.js';
 import { IdentityService } from '../identity/identity.service.js';
@@ -17,6 +19,7 @@ import type { EngagementJobData } from './queue/engagement-queue.js';
 import { IngestTokenService } from './ingest-token.service.js';
 import { EngagementStateMachine } from './state-machine/state-machine.js';
 import { engagements } from './lifecycle.schema.js';
+import type { Metrics } from '../../core/observability/metrics.js';
 
 export type EngagementState =
   | 'queued'
@@ -31,6 +34,17 @@ export type EngagementState =
   | 'archived';
 
 export type Engagement = typeof engagements.$inferSelect;
+
+// States the lifecycle treats as terminal for concurrency counting: an
+// engagement in any of these is no longer consuming a user's "active" slot
+// (docs/component-q-quota.md §7.1). Mirrors the state machine's end states.
+const TERMINAL_STATES: EngagementState[] = [
+  'completed',
+  'halted',
+  'failed',
+  'tearing_down',
+  'archived',
+];
 
 export interface DispatchInput {
   userId: string;
@@ -57,6 +71,9 @@ export class LifecycleService {
     @Inject(IngestTokenService) private readonly ingestTokens: IngestTokenService,
     @Inject(ENGAGEMENT_QUEUE) private readonly queue: Queue<EngagementJobData>,
     @Inject(EngagementStateMachine) private readonly sm: EngagementStateMachine,
+    // Optional so the service is constructible without the @Global metrics
+    // provider; under DI it is always present.
+    @Optional() @Inject('METRICS') private readonly metrics?: Metrics,
   ) {}
 
   // Validate ownership + deployable, write the row `queued`, mint the ingest
@@ -90,12 +107,30 @@ export class LifecycleService {
       githubToken,
       ingestToken,
       timeoutS: this.env.conductorTimeoutS,
+      // Carry the dispatch span's W3C context to the worker so the BullMQ hop
+      // stays in one trace (§6.2). Absent when no root span is active.
+      traceparent: activeTraceparent(),
     };
 
     // Enqueue before flipping to dispatched so a queue failure leaves the row
     // `queued` (retryable), never a phantom dispatched job.
     await this.queue.add('run', job);
     await this.transition(engagement.id, 'dispatched');
+
+    // Sample the queue depth by status after enqueue (Gauge, §6.1). Fail-open —
+    // a metrics/broker read must never fail a successful dispatch.
+    try {
+      const counts = await this.queue.getJobCounts(
+        'waiting',
+        'active',
+        'delayed',
+      );
+      for (const [status, n] of Object.entries(counts)) {
+        this.metrics?.queueDepth.set({ status }, n);
+      }
+    } catch {
+      // visibility only
+    }
 
     return { engagement, ingestToken };
   }
@@ -166,4 +201,50 @@ export class LifecycleService {
       .where(eq(engagements.userId, userId))
       .orderBy(desc(engagements.createdAt));
   }
+
+  // --- Read-only queries for the Quota layer (Component Q, P6) ---
+  // These are pure SELECTs through C's service API — C stays the sole WRITER of
+  // engagement state (§5 rule 1); Q reads owner + active count here, never the table.
+
+  // The engagement's owning user (immutable once the row exists). The quota
+  // aggregator caches this so it resolves each engagement's owner once, not per
+  // event (docs/component-q-quota.md §6.1). Quota-only today; kept public because
+  // ownership is a general C read.
+  async ownerOf(engagementId: string): Promise<string | null> {
+    const row = await this.db
+      .select({ userId: engagements.userId })
+      .from(engagements)
+      .where(eq(engagements.id, engagementId))
+      .limit(1);
+    return row[0]?.userId ?? null;
+  }
+
+  // Count of the user's non-terminal engagements — the concurrency-cap input
+  // (docs/component-q-quota.md §7.1). Non-terminal = state NOT IN the terminal
+  // set, matching the state machine's active span (queued..attacking).
+  async countActive(userId: string): Promise<number> {
+    const rows = await this.db
+      .select({ id: engagements.id })
+      .from(engagements)
+      .where(
+        and(
+          eq(engagements.userId, userId),
+          notInArray(engagements.state, TERMINAL_STATES),
+        ),
+      );
+    return rows.length;
+  }
+}
+
+// Serialise the current OTel context into a W3C traceparent string
+// (`00-<trace-id>-<span-id>-<flags>`), or undefined when no span is active. This
+// is the value carried on the BullMQ job and later passed to the conductor, so the
+// dispatch→provision→attack→ingest trace stays one trace across the process and
+// language boundary (docs/component-h-hardening.md §6.3).
+export function activeTraceparent(): string | undefined {
+  const remote = trace.getActiveSpan();
+  if (!remote) return undefined;
+  const ctx = remote.spanContext();
+  const flags = (ctx.traceFlags & 0x01 ? '01' : '00') as '00' | '01';
+  return `00-${ctx.traceId}-${ctx.spanId}-${flags}`;
 }

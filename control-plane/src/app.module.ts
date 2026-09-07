@@ -3,6 +3,8 @@ import { ConfigModule } from './config/config.module.js';
 import { DrizzleModule } from './db/drizzle.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { HealthModule } from './core/health/health.module.js';
+import { QuotaModule } from './core/quota/quota.module.js';
+import { ObservabilityModule } from './core/observability/observability.module.js';
 import { IdentityModule } from './domains/identity/identity.module.js';
 import { ReposModule } from './domains/repos/repos.module.js';
 import { LifecycleModule } from './domains/lifecycle/lifecycle.module.js';
@@ -24,6 +26,8 @@ import { ReportsModule } from './domains/reports/reports.module.js';
     LifecycleModule, // C · Lifecycle — engagements (sole writer of state)
     TelemetryModule, // D · Telemetry — events, findings, cost
     ReportsModule, // E · Reports   — reports
+    QuotaModule, // Q · Quota    — per-user caps at dispatch (cross-cutting, §12)
+    ObservabilityModule, // H · Observability — OTel + Prometheus + Pino (cross-cutting, §6)
   ],
 })
 export class AppModule {}

@@ -1,0 +1,87 @@
+# Values for the control-plane chart (docs/component-h-hardening.md §8.2). Secrets
+# are injected at deploy time via Vault k8s auth or k8s Secrets — NEVER baked into
+# the image (§8.1). OPENROUTER_API_KEY is deliberately unsettable here: it is the
+# conductor's key and must never live in the plane (the CI leak scanner guards this).
+
+image:
+  repository: ghcr.io/autosploit/control-plane
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Optional override for the generated resource name (default: <release>-control-plane).
+fullnameOverride: ""
+
+replicaCount: 1
+
+strategy:
+  type: RollingUpdate
+
+# One image runs the HTTP app AND the BullMQ worker in the same Nest process (the
+# module factory registers the Worker), so a single Deployment serves both (§8.1,
+# §3.5). This chart ships ONE long-lived Deployment — the ephemeral per-engagement
+# chart is the orchestration layer's, not this one's.
+app:
+  args: ["node", "dist/main.js"]
+  resources:
+    requests: { cpu: "50m", memory: "128Mi" }
+    limits: { cpu: "500m", memory: "512Mi" }
+
+service:
+  type: ClusterIP
+  port: 80
+
+probes:
+  livenessPath: /health
+  readinessPath: /health
+
+# External dependencies the plane depends on (Postgres / Redis / Redpanda / Vault /
+# S3). Parameterized as endpoints; managed equivalents on GKE are referenced via the
+# same values. Subcharts for stateful deps are intentionally OUT of scope here —
+# the orchestration layer and ops own those (§8.2).
+external:
+  postgresUrl: postgres://postgres@postgres:5432/control_plane
+  redisUrl: redis://redis:6379
+  kafkaBrokers: redpanda:9092
+  schemaRegistryUrl: http://redpanda:8081
+  vaultAddr: http://vault:8200
+  s3Endpoint: http://minio:9000
+  s3Bucket: autosploit-reports
+
+# Environment variables applied to BOTH app + worker from values. Secret values are
+# referenced by name (`secretKeyRef`) only — never inlined here.
+env:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  PUBLIC_BASE_URL: http://control-plane
+  OTEL_ENABLED: "false"
+
+# Reference to the k8s Secret that holds the shared secrets
+# (INGEST_TOKEN_SIGNING_KEY, JWT_* , GITHUB_* OAuth, VAULT_DEV token when using a
+# local vault). Values come from an external Secret name, never committed.
+secretRef:
+  name: control-plane-secrets
+
+serviceAccount:
+  create: true
+  name: ""
+  # The plane's own ServiceAccount is wired to Vault's k8s auth method
+  # (§9.1 / §8.2) so VaultService authenticates with the pod identity instead of
+  # a static bootstrap secret (EnvService keys off KUBERNETES_SERVICE_HOST).
+  annotations:
+    vault.hashicorp.com/agent-inject: "false"
+    # When Vault Agent deploys (ops preference), mount the transit key here:
+    vault.hashicorp.com/agent-pre-populate-only: "true"
+
+# Horizontal autoscaling (optional; default off — singular long-lived workload).
+hpa:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+
+# Prometheus scraping via the prometheus.io/scrape annotation (Red metrics on
+# GET /metrics, §6.1).
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  path: /metrics

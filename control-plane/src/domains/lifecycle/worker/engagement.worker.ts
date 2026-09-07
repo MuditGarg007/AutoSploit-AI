@@ -2,11 +2,13 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readFile } from 'node:fs/promises';
+import { context, trace, Span, SpanStatusCode } from '@opentelemetry/api';
 import { EnvService } from '../../../config/env.service.js';
-import { LifecycleService } from '../lifecycle.service.js';
+import { LifecycleService, activeTraceparent } from '../lifecycle.service.js';
 import type { EngagementState } from '../lifecycle.service.js';
 import { IngestRelay } from './ingest-relay.js';
 import type { EngagementJobData } from '../queue/engagement-queue.js';
+import { traceparentToContext } from '../../../core/observability/trace-context.js';
 
 // Shape of the surviving conductor.json record (conductor/src/autosploit_conductor/record.py).
 interface ConductorRecord {
@@ -52,7 +54,7 @@ export class EngagementWorker {
     this.runners.set(engagementId, abort);
 
     try {
-      await this.runConductor(job.data, abort.signal);
+      await this.runUnderSpan(job.data, abort.signal);
     } catch (err) {
       this.logger.error(
         `engagement ${engagementId} worker error: ${(err as Error).message}`,
@@ -62,6 +64,33 @@ export class EngagementWorker {
     } finally {
       this.runners.delete(engagementId);
     }
+  }
+
+  // Open the worker span under the dispatch trace via the job's traceparent
+  // (§6.2). When the job has none (pre-H or a standalone enqueue) we run over the
+  // ambient context — the engine stays fail-open to tracing (a missing collector
+  // must never change engagement behaviour).
+  private async runUnderSpan(
+    jobData: EngagementJobData,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const tracer = trace.getTracer('autosploit-control-plane');
+    const parent = traceparentToContext(jobData.traceparent);
+    await context.with(parent ?? context.active(), async () => {
+      const span: Span = tracer.startSpan('engagement.worker');
+      try {
+        await this.runConductor(jobData, signal);
+        span.setStatus({ code: SpanStatusCode.OK });
+      } catch (err) {
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: (err as Error).message,
+        });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
   }
 
   // Signal a running engagement to halt. The controller calls this after the
@@ -94,6 +123,10 @@ export class EngagementWorker {
     await this.safeTransition(engagementId, 'attacking');
 
     const [cmd, ...cmdArgs] = splitCommand(this.env.conductorCmd);
+    // The current W3C traceparent, stamped from the active worker span so the
+    // conductor (a Python subprocess, Phase A) can continue the same trace (§6.3).
+    // The harness stamps it onto emitted events; ingest extracts it as the parent.
+    const traceparent = activeTraceparent();
     const child = spawn(
       cmd,
       [
@@ -106,13 +139,18 @@ export class EngagementWorker {
         outBase,
         '--timeout-s',
         String(timeoutS),
+        ...(traceparent ? ['--traceparent', traceparent] : []),
       ],
       {
         // GITHUB_TOKEN goes to the conductor env for the cloner (provisioner
         // reads it from env only). The conductor never passes it to the harness.
         // OPENROUTER_API_KEY is deliberately absent — the conductor resolves it
         // from its own env (§6 secret split).
-        env: { ...process.env, GITHUB_TOKEN: githubToken },
+        env: {
+          ...process.env,
+          GITHUB_TOKEN: githubToken,
+          ...(traceparent ? { TRACEPARENT: traceparent } : {}),
+        },
         stdio: ['ignore', 'pipe', 'pipe'],
         signal,
       },
@@ -138,7 +176,7 @@ export class EngagementWorker {
     // logs (§6 secret split). Bounded to the last 4KB for diagnostics.
     let stderrTail = '';
     child.stderr.on('data', (chunk: Buffer) => {
-      const text = chunk.toString('utf8').replaceAll(githubToken, '<redacted>');
+      const text = redactSecret(chunk.toString('utf8'), githubToken);
       stderrTail = (stderrTail + text).slice(-4000);
     });
 
@@ -286,4 +324,14 @@ export function splitCommand(cmd: string): string[] {
     tokens.push(m[1] ?? m[2]);
   }
   return tokens;
+}
+
+// Replace every occurrence of a secret in a stream chunk with the neutral
+// placeholder (docs/component-h-hardening.md §5.2). Exported for the hardening
+// proof: "conductor writes the token to stderr → logs contain `<redacted>` and
+// never the token bytes". The guard is applied to the worker's conductor stderr
+// capture so a leaked token can never reach a persisted log.
+export function redactSecret(chunk: string, secret: string): string {
+  if (!secret) return chunk;
+  return chunk.replaceAll(secret, '<redacted>');
 }

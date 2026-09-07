@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "control-plane.fullname" . }}-app
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: app
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: {{ .Values.strategy.type }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/component: app
+      annotations:
+        {{- with .Values.serviceMonitor }}
+        prometheus.io/scrape: "true"
+        prometheus.io/path: {{ .path | quote }}
+        prometheus.io/port: "3000"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "control-plane.serviceAccountName" . }}
+      containers:
+        - name: control-plane
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: {{ .Values.app.args | toJson }}
+          ports:
+            - containerPort: 3000
+              name: http
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.livenessPath }}
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readinessPath }}
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          env:
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k | quote }}
+              value: {{ $v | quote }}
+            {{- end }}
+            # External dependency endpoints.
+            - name: DATABASE_URL
+              value: {{ required ".Values.external.postgresUrl is required" .Values.external.postgresUrl | quote }}
+            - name: REDIS_URL
+              value: {{ required ".Values.external.redisUrl is required" .Values.external.redisUrl | quote }}
+            - name: KAFKA_BROKERS
+              value: {{ .Values.external.kafkaBrokers | quote }}
+            - name: SCHEMA_REGISTRY_URL
+              value: {{ .Values.external.schemaRegistryUrl | quote }}
+            - name: VAULT_ADDR
+              value: {{ .Values.external.vaultAddr | quote }}
+            - name: S3_ENDPOINT
+              value: {{ .Values.external.s3Endpoint | quote }}
+            - name: S3_BUCKET
+              value: {{ .Values.external.s3Bucket | quote }}
+            {{- with .Values.secretRef }}
+            # Secrets referenced by name only — nothing is inlined in the chart.
+            - name: INGEST_TOKEN_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: INGEST_TOKEN_SIGNING_KEY
+            - name: JWT_ACCESS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: JWT_ACCESS_SECRET
+            - name: JWT_REFRESH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: JWT_REFRESH_SECRET
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: GITHUB_CLIENT_ID
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: GITHUB_CLIENT_SECRET
+            - name: GITHUB_CALLBACK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: GITHUB_CALLBACK_URL
+            - name: VAULT_TRANSIT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: VAULT_TRANSIT_KEY
+            {{- end }}
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}

@@ -72,6 +72,27 @@ export class EnvService {
   // Short by default — the URL is minted per request, not stored (§4.E).
   readonly reportUrlTtlS = Number(process.env.REPORT_URL_TTL_S ?? 15 * 60);
 
+  // --- Quota (Component Q, P6) — per-user caps, all 0 = disabled ---
+  // µUSD cap on a user's summed engagement spend (e.g. 5_000_000 = $5.00).
+  readonly quotaMaxUsdMicros = Number(process.env.QUOTA_MAX_USD_MICROS ?? 0);
+  readonly quotaMaxFindings = Number(process.env.QUOTA_MAX_FINDINGS ?? 0);
+  // Max simultaneous non-terminal engagements per user (overview §3 concurrency cap).
+  readonly quotaMaxConcurrent = Number(process.env.QUOTA_MAX_CONCURRENT ?? 0);
+  // Fail-open when the Redis/topic meter is unreachable (harness ledger is the hard
+  // per-engagement backstop, §3.5). false = block dispatch on an unreachable meter.
+  readonly quotaFailOpen = (process.env.QUOTA_FAIL_OPEN ?? 'true') !== 'false';
+
+  // --- Observability (Component H) — OTel + Prometheus + Pino (§9) ---
+  // Master switch: when false (default), the OTel SDK is not started — local/CI
+  // need no collector. The /metrics endpoint + Pino stay on; only trace export is
+  // gated (fail-open, §3.6).
+  readonly otelEnabled = (process.env.OTEL_ENABLED ?? 'false') === 'true';
+  readonly otelExporterEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? '';
+  readonly otelServiceName =
+    process.env.OTEL_SERVICE_NAME ?? 'autosploit-control-plane';
+  // Log level for Pino; JSON in prod, pretty in dev.
+  readonly logLevel = process.env.LOG_LEVEL ?? (this.isProd ? 'info' : 'debug');
+
   private required(key: string): string {
     const v = process.env[key];
     if (!v) throw new Error(`Missing required env var: ${key}`);
