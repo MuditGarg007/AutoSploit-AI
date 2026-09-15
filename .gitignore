@@ -16,3 +16,6 @@ coverage/
 .venv/
 __pycache__/
 *.pyc
+
+# CommandCode local config (not shared)
+.commandcode/
