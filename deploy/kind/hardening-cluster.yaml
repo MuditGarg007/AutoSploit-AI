@@ -1,0 +1,18 @@
+# Local hardening substrate (roadmap M4). kind cluster with the default CNI
+# OFF so Cilium owns networking, and the host gVisor binaries bind-mounted into
+# the node so a `runsc` containerd runtime can be registered (see
+# scripts/m4-bootstrap.sh). Single node is enough for the engagement model.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: autosploit-hardening
+networking:
+  disableDefaultCNI: true          # Cilium becomes the CNI
+nodes:
+  - role: control-plane
+    extraMounts:
+      # Host gVisor binaries (static, x86_64) visible inside the node container.
+      # Install them first: see scripts/m4-bootstrap.sh header.
+      - hostPath: /usr/local/bin/runsc
+        containerPath: /usr/local/bin/runsc
+      - hostPath: /usr/local/bin/containerd-shim-runsc-v1
+        containerPath: /usr/local/bin/containerd-shim-runsc-v1

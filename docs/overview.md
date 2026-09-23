@@ -202,9 +202,10 @@ specified in a separate design doc once the new architecture is settled.
 - **Buildpack fallback (§2.1 step 3):** MVP or deferred? (Leaning deferred.)
 - **Post-exploit thinness (§2.2):** accept the single-container limit, or require
   multi-service compose to keep lateral-movement meaningful?
-- **Isolation provider:** managed microVM provider (Fly Machines / E2B / similar) for
-  speed and safety, vs. self-hosted K8s + gVisor for the deeper infra story. Decide by
-  goal — "shipped and safe" vs. "I operate the cluster myself."
+- **Isolation provider — DECIDED 2026-09-15: self-hosted K8s + gVisor** (over the managed
+  microVM alternative, Fly Machines / E2B). Matches the isolation model the orchestration /
+  conductor / provisioner docs already build on; unblocks step-3 hardening. See
+  `deferred-open-items.md` for the record.
 - **Cost model:** per-run compute + egress + model spend → per-user quota, reusing the
   budget-metering primitive as the billing basis.
 - **New engine architecture (§7):** the shape of the adaptive loop — planner/executor
