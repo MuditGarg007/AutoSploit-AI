@@ -77,7 +77,7 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
 - **Exit:** the cluster pulls the harness image by digest from GHCR.
 - **Depends on:** M4. Largely already present in `release.yml`; verify coverage.
 
-### M6 — Conductor as a Kubernetes controller
+### M6 — Conductor as a Kubernetes controller — DONE 2026-09-24
 
 - **Work:** replace the Phase-A subprocess conductor with a real Python
   `kubernetes` client. Per engagement: create `engagement-<id>` namespace, launch
@@ -88,6 +88,20 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
   reaches the target over the Service DNS, report collected, namespace deleted with
   nothing left behind.
 - **Depends on:** M4, M5.
+- **Status — DONE.** Built as `conductor/src/autosploit_conductor/k8s/`
+  (`manifests` → `client` → `watch` → `run` → `factory`/`provision`), all layers
+  test-first (46 unit tests, `kubernetes` import isolated to the one `factory`).
+  CLI wired: `conductor run <repo> --k8s`. **Exit criterion proven on the live M4
+  kind cluster** by `tests/integration/test_m6_live.py`: it drives the real
+  `EngagementCluster` + `watch_pod` end to end — namespace → gVisor target
+  (nginx) + Service → gVisor attacker (curl) reaching the target over its Service
+  DNS → report (logs) collected → namespace deleted → verified zero residue.
+  Stand-in images (nginx/curl) are legitimate placeholders for what the *other*
+  milestones supply — the real harness image is **M5**, the in-cluster Kaniko
+  target build is **M8** — so what is closed here is exactly M6's own scope: the
+  conductor's controller loop on real infra. The M8 provision seam is stubbed
+  (`k8s/provision.py`), so `--k8s` today stands the namespace up, records a clean
+  `failed(provision)`, and tears down until M8 lands.
 
 ### M6a — Scope contract bump to 1.1.0
 
@@ -99,6 +113,12 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
 - **Exit:** provisioner emits a Service-DNS scope that round-trips through
   `load_scope`; harness attacks the target over cluster DNS, not loopback.
 - **Depends on:** M6 (rides with the conductor/provisioner cutover).
+- **Status — conductor side ready, blocked on the provisioner.** The conductor
+  already treats the target as a Service (it deploys the Service and exposes its
+  cluster DNS, `k8s/client.create_target_service`), so the consumer end of the
+  contract is in place. The remaining work — the provisioner *emitting* a
+  Service-DNS `host` into scope.yaml and moving `CONTRACT_VERSION` to `1.1.0` — is
+  provisioner-side and lands with the M8 in-cluster build. Tracked, not yet done.
 
 ### M7 — NetworkPolicy: the egress matrix, enforced
 
