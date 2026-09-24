@@ -56,12 +56,24 @@ TARGET_SERVICE_NAME = "target"
 
 # --- M7: the egress matrix (orchestration.md §4.1, §6 [1]) -------------------
 #
-# The attacker Pod is the untrusted agent loop. Left open it could exfiltrate to
-# anywhere on the network. M7 pins its egress to exactly three edges and denies
-# the rest, enforced by Cilium. We use a **CiliumNetworkPolicy** (not a plain
-# k8s NetworkPolicy) because the model-API allow is by hostname (`toFQDNs`): a
-# plain NetworkPolicy can only match IP CIDRs, so it cannot distinguish the model
-# API from arbitrary internet — the exact discrimination redteam.sh SEAM-1 tests.
+# The engagement namespace holds untrusted code (the agent loop and the target
+# built from the user repo). Left open it could exfiltrate to anywhere on the
+# network. M7 pins the namespace's egress to exactly the §4.1 matrix edges and
+# denies the rest, enforced by Cilium.
+#
+# The policy selects the WHOLE namespace (empty `endpointSelector`), not just the
+# attacker: it is the namespace's default-deny-egress baseline plus the allow-set,
+# so every Pod here — attacker, target, and any probe — is governed, and a Pod
+# that matched no policy (Cilium default-allow) can't slip egress. This mirrors
+# the M4 smoke's namespace-wide `podSelector: {}` and is what redteam.sh SEAM-1
+# probes. (Splitting the target down to DNS-only least-privilege is a deferred
+# hardening, see docs/deferred-open-items.md; the target sharing the allow-set
+# still can't reach arbitrary internet or the DB plane ports.)
+#
+# We use a **CiliumNetworkPolicy** (not a plain k8s NetworkPolicy) because the
+# model-API allow is by hostname (`toFQDNs`): a plain NetworkPolicy can only match
+# IP CIDRs, so it cannot distinguish the model API from arbitrary internet — the
+# exact discrimination redteam.sh SEAM-1 tests.
 #
 # Cilium's own selectors use a `k8s:`-prefixed namespace label to cross namespaces.
 CILIUM_API_VERSION = "cilium.io/v2"
@@ -300,12 +312,12 @@ def network_policy_manifest(
     control_plane_selector: Mapping[str, str] = CONTROL_PLANE_SELECTOR,
     control_plane_port: int = CONTROL_PLANE_PORT,
 ) -> dict[str, Any]:
-    """The attacker-egress CiliumNetworkPolicy — SEAM-1 made literal (§4.1).
+    """The engagement-egress CiliumNetworkPolicy — SEAM-1 made literal (§4.1).
 
-    Governs the attacker Pod only (`endpointSelector` on `role=attacker` within
-    this engagement). Cilium treats an endpoint with *any* egress rule as
-    default-deny egress, so listing the four allowed edges below denies every
-    other destination by construction:
+    Governs every Pod in the engagement namespace (empty `endpointSelector`).
+    Cilium treats an endpoint with *any* egress rule as default-deny egress, so
+    listing the four allowed edges below denies every other destination by
+    construction:
 
     1. **DNS** to kube-dns (53 UDP+TCP) with an L7 `dns` visibility rule — both a
        hard requirement (nothing resolves under default-deny without it) and the
@@ -369,9 +381,10 @@ def network_policy_manifest(
             "labels": engagement_labels(engagement_id),
         },
         "spec": {
-            "endpointSelector": {
-                "matchLabels": engagement_labels(engagement_id, role="attacker")
-            },
+            # Empty selector = every Pod in this namespace (default-deny baseline
+            # + the allow-set above). Namespace isolation is by the object living
+            # in `engagement-<id>`, so it needs no engagement label to scope it.
+            "endpointSelector": {},
             "egress": egress,
         },
     }

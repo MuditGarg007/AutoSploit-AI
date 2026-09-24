@@ -136,17 +136,16 @@ def _egress_rules(np):
     return np["spec"]["egress"]
 
 
-def test_network_policy_is_cilium_and_governs_the_attacker():
+def test_network_policy_is_cilium_and_governs_the_whole_namespace():
     # FQDN allow-listing is why this must be a CiliumNetworkPolicy, not a plain
-    # k8s NetworkPolicy — and the policy binds to the attacker endpoint only.
+    # k8s NetworkPolicy. The empty endpointSelector governs every Pod in the
+    # engagement namespace (default-deny baseline + allow-set), so no Pod — target
+    # or a probe — is left with Cilium's default-allow egress.
     np = m.network_policy_manifest(ID)
     assert np["apiVersion"] == "cilium.io/v2"
     assert np["kind"] == "CiliumNetworkPolicy"
     assert np["metadata"]["namespace"] == f"engagement-{ID}"
-    assert np["spec"]["endpointSelector"]["matchLabels"] == {
-        "engagement": ID,
-        "role": "attacker",
-    }
+    assert np["spec"]["endpointSelector"] == {}
 
 
 def test_network_policy_allows_dns_to_kube_dns_with_l7_rule():

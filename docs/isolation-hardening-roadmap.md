@@ -1,8 +1,8 @@
 # Isolation Hardening — Roadmap (Step 3)
 
-> **Status: in progress (updated 2026-09-24).** Done: M4, M6. M7 code-complete
-> (live SEAM-1 proof pending a running cluster). Open: M5, M6a, M8, M9, H3.
-> Execution roadmap for build-order step 3
+> **Status: in progress (updated 2026-09-24).** Done: M4, M6. M7 enforcement proven
+> live on kind (its two internet-dependent SEAM-1 assertions ride the H3 online run).
+> Open: M5, M6a, M8, M9, H3. Execution roadmap for build-order step 3
 > (`overview.md §6`): move engagement execution off plain local Docker onto a
 > hardened Kubernetes substrate so untrusted user repos run safely isolated. This is
 > **provisioner + conductor Phase B** (`orchestration.md §9`). It is a tracking and
@@ -134,7 +134,7 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
   Service-DNS `host` into scope.yaml and moving `CONTRACT_VERSION` to `1.1.0` — is
   provisioner-side and lands with the M8 in-cluster build. Tracked, not yet done.
 
-### M7 — NetworkPolicy: the egress matrix, enforced — code-complete, live proof pending
+### M7 — NetworkPolicy: the egress matrix, enforced — enforcement proven live; external edges ride H3
 
 - **Work:** apply a **default-deny egress** NetworkPolicy in the engagement
   namespace, allowing exactly attacker → target, attacker → model API (FQDN / CIDR),
@@ -144,15 +144,19 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
   other egress destination is refused; `redteam.sh` SEAM-1 passes on the local
   cluster.
 - **Depends on:** M4 (Cilium), M6 (namespace + Pods to police).
-- **Status — code-complete, unit-proven; live SEAM-1 proof pending.** Built as a
-  **CiliumNetworkPolicy** (not a plain k8s NetworkPolicy): the model-API allow is by
-  hostname (`toFQDNs`), which a plain NetworkPolicy — CIDR-only — cannot express, and
-  hostname discrimination (openrouter allowed, `example.com` denied) is exactly what
-  `redteam.sh` SEAM-1 tests. Layers, test-first, mirroring M6:
-  - `k8s/manifests.network_policy_manifest` — the pure builder. Egress = 4 rules
-    only (DNS→kube-dns with an L7 `dns` rule, target any-port, model API `toFQDNs`
-    :443, control-plane :80); Cilium makes any endpoint with an egress rule
-    default-deny, so "these four" *is* the deny of everything else.
+- **Status — code + enforcement proven live on kind; the two internet-dependent
+  assertions defer to H3.** Built as a **CiliumNetworkPolicy** (not a plain k8s
+  NetworkPolicy): the model-API allow is by hostname (`toFQDNs`), which a plain
+  NetworkPolicy — CIDR-only — cannot express, and hostname discrimination (openrouter
+  allowed, `example.com` denied) is exactly what `redteam.sh` SEAM-1 tests. Layers,
+  test-first, mirroring M6:
+  - `k8s/manifests.network_policy_manifest` — the pure builder. **Namespace-wide**
+    (empty `endpointSelector`), so it is the engagement namespace's default-deny
+    baseline plus the allow-set — every Pod (attacker, target, probe) is governed,
+    none left on Cilium's default-allow. Egress = 4 rules only (DNS→kube-dns with an
+    L7 `dns` rule, target any-port, model API `toFQDNs` :443, control-plane :80);
+    Cilium makes any selected endpoint default-deny, so "these four" *is* the deny of
+    everything else.
   - `k8s/client.apply_network_policy` — applies the CRD via a `CustomObjectsApi`
     seam (`cilium.io/v2 ciliumnetworkpolicies`), injected the same way CoreV1 is.
   - `k8s/run.run_k8s` — applies the policy immediately after namespace create,
@@ -160,12 +164,24 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
     engagement records `failed` and never launches the attacker.
   - `k8s/factory.build_custom_objects` — the real `CustomObjectsApi`, kept in the
     one module allowed to import `kubernetes`.
-  56 k8s unit tests green (13 new for M7). **Remaining:** run `redteam.sh` SEAM-1
-  against a live kind cluster with the policy applied — M7's exit gate — which needs
-  the M4 substrate up (gVisor `RuntimeClass` present). One thing to verify on that
-  run: Cilium's L7 DNS proxy is active so `toFQDNs` resolves (M4 install left
-  `l7Proxy` at its default; confirm, else add `--set l7Proxy=true` to
-  `scripts/m4-bootstrap.sh`).
+  56 k8s unit tests green (13 new for M7).
+  **Live proof (2026-09-24, kind `autosploit-hardening`, Cilium 1.21.0-pre.2 with
+  Envoy L7 proxy up).** Applied the real builder output to an `engagement-m7live`
+  namespace (target Pod+Service + a role=decoy Pod+Service) and probed from a
+  curl Pod:
+  - target Service `:8080` → **ALLOW** (http 200); in-cluster DNS `:53` → **ALLOW**
+    (name resolves).
+  - a decoy Pod identical to the target but `role=decoy` (not in the allow-set) →
+    **DENY** (http 000); kube-dns pod on `:9153` (only `:53` allowed) → **DENY**.
+  - causation control: with the policy deleted the decoy is reachable (200); on
+    re-apply it is blocked again while the target stays allowed — the deny is the
+    policy's, proven by toggling it.
+  **Deferred to H3 (needs an online cluster — this kind node is air-gapped, no
+  egress):** the model-API `toFQDNs` :443 ALLOW, the arbitrary-internet DENY
+  discrimination, and the control-plane :80 ALLOW (no control-plane deployed here).
+  The L7 DNS proxy (Envoy) is confirmed present, so `toFQDNs` will resolve once
+  there is internet; these three ride the full `redteam.sh` SEAM-1 pass on the H3
+  GKE deploy.
 
 ### M8 — Kaniko in-cluster target build
 

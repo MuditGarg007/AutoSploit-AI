@@ -168,7 +168,7 @@ def test_apply_network_policy_creates_cilium_crd_in_namespace():
     assert call["plural"] == "ciliumnetworkpolicies"
     assert call["namespace"] == NS
     assert call["body"]["kind"] == "CiliumNetworkPolicy"
-    assert call["body"]["spec"]["endpointSelector"]["matchLabels"]["role"] == "attacker"
+    assert call["body"]["spec"]["endpointSelector"] == {}
 
 
 def test_apply_network_policy_uses_injected_custom_api():
