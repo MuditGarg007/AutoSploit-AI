@@ -127,3 +127,109 @@ def test_service_selects_target_and_maps_ports():
 def test_service_target_port_defaults_to_port():
     svc = m.target_service_manifest(ID, port=8080)
     assert svc["spec"]["ports"][0]["targetPort"] == 8080
+
+
+# --- M7: the egress matrix ---------------------------------------------------
+
+
+def _egress_rules(np):
+    return np["spec"]["egress"]
+
+
+def test_network_policy_is_cilium_and_governs_the_attacker():
+    # FQDN allow-listing is why this must be a CiliumNetworkPolicy, not a plain
+    # k8s NetworkPolicy — and the policy binds to the attacker endpoint only.
+    np = m.network_policy_manifest(ID)
+    assert np["apiVersion"] == "cilium.io/v2"
+    assert np["kind"] == "CiliumNetworkPolicy"
+    assert np["metadata"]["namespace"] == f"engagement-{ID}"
+    assert np["spec"]["endpointSelector"]["matchLabels"] == {
+        "engagement": ID,
+        "role": "attacker",
+    }
+
+
+def test_network_policy_allows_dns_to_kube_dns_with_l7_rule():
+    # Without an explicit DNS allow a default-deny egress blocks name resolution
+    # and every other allow fails; the L7 dns rule also feeds toFQDNs.
+    np = m.network_policy_manifest(ID)
+    dns = _egress_rules(np)[0]
+    assert dns["toEndpoints"][0]["matchLabels"] == {
+        "k8s:io.kubernetes.pod.namespace": "kube-system",
+        "k8s-app": "kube-dns",
+    }
+    ports = dns["toPorts"][0]
+    protos = {p["protocol"] for p in ports["ports"]}
+    assert protos == {"UDP", "TCP"}
+    assert all(p["port"] == "53" for p in ports["ports"])
+    assert ports["rules"]["dns"] == [{"matchPattern": "*"}]
+
+
+def test_network_policy_allows_target_any_port_same_engagement():
+    np = m.network_policy_manifest(ID)
+    target = next(
+        r
+        for r in _egress_rules(np)
+        if r.get("toEndpoints")
+        and r["toEndpoints"][0]["matchLabels"].get("role") == "target"
+    )
+    assert target["toEndpoints"][0]["matchLabels"] == {
+        "engagement": ID,
+        "role": "target",
+    }
+    # Any port to the target — no toPorts restriction.
+    assert "toPorts" not in target
+
+
+def test_network_policy_allows_model_api_by_fqdn_on_443_only():
+    np = m.network_policy_manifest(ID)
+    model = next(r for r in _egress_rules(np) if "toFQDNs" in r)
+    assert model["toFQDNs"] == [{"matchName": "api.openrouter.ai"}]
+    port = model["toPorts"][0]["ports"][0]
+    assert port == {"port": "443", "protocol": "TCP"}
+
+
+def test_network_policy_allows_control_plane_ingest_on_80_only():
+    np = m.network_policy_manifest(ID)
+    cp = next(
+        r
+        for r in _egress_rules(np)
+        if r.get("toEndpoints")
+        and "k8s:io.kubernetes.pod.namespace" in r["toEndpoints"][0]["matchLabels"]
+        and r["toEndpoints"][0]["matchLabels"].get("app") == "control-plane"
+    )
+    labels = cp["toEndpoints"][0]["matchLabels"]
+    assert labels["k8s:io.kubernetes.pod.namespace"] == "autosploit-system"
+    port = cp["toPorts"][0]["ports"][0]
+    assert port == {"port": "80", "protocol": "TCP"}
+
+
+def test_network_policy_denies_everything_else_by_construction():
+    # The security property: exactly the four allowed edges, nothing more. Cilium
+    # makes an endpoint with any egress rule default-deny, so "only these four"
+    # IS the deny of Postgres/Redis/Redpanda and arbitrary internet.
+    np = m.network_policy_manifest(ID)
+    assert len(_egress_rules(np)) == 4
+
+
+def test_network_policy_overrides_reach_control_plane_and_model():
+    np = m.network_policy_manifest(
+        ID,
+        model_fqdns=("proxy.internal", "api.openrouter.ai"),
+        control_plane_namespace="cp-ns",
+        control_plane_selector={"app": "ingest"},
+        control_plane_port=8080,
+    )
+    model = next(r for r in _egress_rules(np) if "toFQDNs" in r)
+    assert model["toFQDNs"] == [
+        {"matchName": "proxy.internal"},
+        {"matchName": "api.openrouter.ai"},
+    ]
+    cp = next(
+        r
+        for r in _egress_rules(np)
+        if r.get("toEndpoints")
+        and r["toEndpoints"][0]["matchLabels"].get("app") == "ingest"
+    )
+    assert cp["toEndpoints"][0]["matchLabels"]["k8s:io.kubernetes.pod.namespace"] == "cp-ns"
+    assert cp["toPorts"][0]["ports"][0]["port"] == "8080"

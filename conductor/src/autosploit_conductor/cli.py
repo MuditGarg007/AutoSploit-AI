@@ -55,15 +55,17 @@ def _run_k8s(args: argparse.Namespace) -> tuple[object, Path | None]:
     stub for now, so this path stands the namespace up, records a clean
     failed(provision), and tears down until the in-cluster builder lands.
     """
-    from autosploit_conductor.k8s.factory import build_core_v1
+    from autosploit_conductor.k8s.factory import build_core_v1, build_custom_objects
     from autosploit_conductor.k8s.provision import phaseb_provision
     from autosploit_conductor.k8s.run import run_k8s
 
     api = build_core_v1()
+    custom = build_custom_objects()
     return run_k8s(
         args.repo,
         api,
         provision=phaseb_provision,
+        custom=custom,
         engagement_id=args.engagement_id,
         out_dir=args.out,
         timeout_s=args.timeout_s,

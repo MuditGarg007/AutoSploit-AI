@@ -32,6 +32,12 @@ from autosploit_conductor.k8s import manifests as m
 _HTTP_CONFLICT = 409
 _HTTP_NOT_FOUND = 404
 
+# CiliumNetworkPolicy is a custom resource, so it is applied through
+# CustomObjectsApi (not CoreV1) addressed by group/version/plural (M7).
+_CILIUM_GROUP = "cilium.io"
+_CILIUM_VERSION = "v2"
+_CILIUM_PLURAL = "ciliumnetworkpolicies"
+
 
 def _http_status(exc: BaseException) -> int | None:
     """The HTTP status of a k8s API exception, or None if it isn't one.
@@ -61,11 +67,33 @@ class CoreV1(Protocol):
     def read_namespaced_pod_log(self, name: str, namespace: str) -> Any: ...
 
 
+class CustomObjects(Protocol):
+    """The slice of `kubernetes.client.CustomObjectsApi` this wrapper uses.
+
+    CiliumNetworkPolicy is a CRD, so it does not go through CoreV1; it is created
+    as a namespaced custom object addressed by group/version/plural (M7).
+    """
+
+    def create_namespaced_custom_object(
+        self, group: str, version: str, namespace: str, plural: str, body: Any
+    ) -> Any: ...
+
+
 class EngagementCluster:
     """All the cluster mutations for one engagement, scoped to its namespace."""
 
-    def __init__(self, api: CoreV1, engagement_id: str) -> None:
+    def __init__(
+        self,
+        api: CoreV1,
+        engagement_id: str,
+        *,
+        custom: CustomObjects | None = None,
+    ) -> None:
         self._api = api
+        # The CustomObjectsApi for the CiliumNetworkPolicy CRD. Defaults to `api`
+        # so a single combined fake (and every existing CoreV1-only call site)
+        # keeps working; production injects a real CustomObjectsApi (factory).
+        self._custom: CustomObjects = custom if custom is not None else api  # type: ignore[assignment]
         self.engagement_id = engagement_id
         self.namespace = m.namespace_name(engagement_id)
 
@@ -93,6 +121,23 @@ class EngagementCluster:
             if _http_status(exc) == _HTTP_NOT_FOUND:
                 return
             raise
+
+    # --- egress policy (governs the untrusted attacker, M7) ------------------
+
+    def apply_network_policy(self, **overrides: Any) -> None:
+        """Apply the attacker-egress CiliumNetworkPolicy (SEAM-1, §4.1).
+
+        Must run after the namespace exists and BEFORE the attacker Pod, so there
+        is never a window where the attacker runs unpoliced. `overrides` pass
+        through to `network_policy_manifest` (model host / control-plane location).
+        """
+        self._custom.create_namespaced_custom_object(
+            group=_CILIUM_GROUP,
+            version=_CILIUM_VERSION,
+            namespace=self.namespace,
+            plural=_CILIUM_PLURAL,
+            body=m.network_policy_manifest(self.engagement_id, **overrides),
+        )
 
     # --- attacker-side objects (trusted: hold/reference the key) -------------
 

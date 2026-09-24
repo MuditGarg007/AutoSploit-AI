@@ -1,6 +1,8 @@
 # Isolation Hardening — Roadmap (Step 3)
 
-> **Status: planning (2026-09-15).** Execution roadmap for build-order step 3
+> **Status: in progress (updated 2026-09-24).** Done: M4, M6. M7 code-complete
+> (live SEAM-1 proof pending a running cluster). Open: M5, M6a, M8, M9, H3.
+> Execution roadmap for build-order step 3
 > (`overview.md §6`): move engagement execution off plain local Docker onto a
 > hardened Kubernetes substrate so untrusted user repos run safely isolated. This is
 > **provisioner + conductor Phase B** (`orchestration.md §9`). It is a tracking and
@@ -61,7 +63,7 @@ Sequenced from `orchestration.md §9 Phase B`. Each milestone lists its work, it
 exit criterion (how we know it's done), and what it depends on. Numbering continues
 the §9 Phase B build order (steps 4–9) so the two docs line up.
 
-### M4 — Local cluster substrate
+### M4 — Local cluster substrate — DONE 2026-09-23
 
 - **Work:** stand up a local **k3s / kind** cluster with the **Cilium** CNI, via
   Terraform or a scripted bootstrap. Install the **gVisor** `RuntimeClass`. Get a
@@ -69,13 +71,25 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
 - **Exit:** `kubectl` can create a namespace and schedule a gVisor Pod that runs; a
   trivial NetworkPolicy denies traffic as expected.
 - **Depends on:** nothing. **Start here** — cheapest loop, everything stacks on it.
+- **Status — DONE.** Shipped in commit `d42141f` (M4 substrate): scripted bootstrap
+  `scripts/m4-bootstrap.sh` plus `deploy/kind/`, `deploy/helm/`, `deploy/terraform/`.
+  kind + Cilium CNI + gVisor `RuntimeClass` stand up; a gVisor Pod schedules and a
+  trivial NetworkPolicy bites. Independently re-proven live by M6's
+  `tests/integration/test_m6_live.py`, which runs gVisor target + attacker Pods on
+  this same kind cluster end to end. (Substrate note: on this kernel kind needs
+  Cilium >= 1.21.0-pre.2 — see the M4 bootstrap.)
 
-### M5 — Harness image + CI to registry
+### M5 — Harness image + CI to registry — NOT DONE
 
 - **Work:** confirm/extend the existing GHCR build-scan-push so the **harness image**
   (attacker) is built, scanned, and pushed, and is pullable by the cluster.
 - **Exit:** the cluster pulls the harness image by digest from GHCR.
 - **Depends on:** M4. Largely already present in `release.yml`; verify coverage.
+- **Status — NOT done.** `.github/workflows/release.yml` builds, scans, and pushes
+  the **control-plane** image only; there is no harness `Dockerfile` and no harness
+  build/scan/push/digest-pull anywhere in the tree. M6 runs against a stand-in
+  attacker image (curl) precisely because the real harness image is still M5's
+  scope. This is one of the milestones still open off M6.
 
 ### M6 — Conductor as a Kubernetes controller — DONE 2026-09-24
 
@@ -120,7 +134,7 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
   Service-DNS `host` into scope.yaml and moving `CONTRACT_VERSION` to `1.1.0` — is
   provisioner-side and lands with the M8 in-cluster build. Tracked, not yet done.
 
-### M7 — NetworkPolicy: the egress matrix, enforced
+### M7 — NetworkPolicy: the egress matrix, enforced — code-complete, live proof pending
 
 - **Work:** apply a **default-deny egress** NetworkPolicy in the engagement
   namespace, allowing exactly attacker → target, attacker → model API (FQDN / CIDR),
@@ -130,6 +144,28 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
   other egress destination is refused; `redteam.sh` SEAM-1 passes on the local
   cluster.
 - **Depends on:** M4 (Cilium), M6 (namespace + Pods to police).
+- **Status — code-complete, unit-proven; live SEAM-1 proof pending.** Built as a
+  **CiliumNetworkPolicy** (not a plain k8s NetworkPolicy): the model-API allow is by
+  hostname (`toFQDNs`), which a plain NetworkPolicy — CIDR-only — cannot express, and
+  hostname discrimination (openrouter allowed, `example.com` denied) is exactly what
+  `redteam.sh` SEAM-1 tests. Layers, test-first, mirroring M6:
+  - `k8s/manifests.network_policy_manifest` — the pure builder. Egress = 4 rules
+    only (DNS→kube-dns with an L7 `dns` rule, target any-port, model API `toFQDNs`
+    :443, control-plane :80); Cilium makes any endpoint with an egress rule
+    default-deny, so "these four" *is* the deny of everything else.
+  - `k8s/client.apply_network_policy` — applies the CRD via a `CustomObjectsApi`
+    seam (`cilium.io/v2 ciliumnetworkpolicies`), injected the same way CoreV1 is.
+  - `k8s/run.run_k8s` — applies the policy immediately after namespace create,
+    **before any Pod**, and **fail-closed**: if the lockdown can't be applied the
+    engagement records `failed` and never launches the attacker.
+  - `k8s/factory.build_custom_objects` — the real `CustomObjectsApi`, kept in the
+    one module allowed to import `kubernetes`.
+  56 k8s unit tests green (13 new for M7). **Remaining:** run `redteam.sh` SEAM-1
+  against a live kind cluster with the policy applied — M7's exit gate — which needs
+  the M4 substrate up (gVisor `RuntimeClass` present). One thing to verify on that
+  run: Cilium's L7 DNS proxy is active so `toFQDNs` resolves (M4 install left
+  `l7Proxy` at its default; confirm, else add `--set l7Proxy=true` to
+  `scripts/m4-bootstrap.sh`).
 
 ### M8 — Kaniko in-cluster target build
 
@@ -216,7 +252,13 @@ them distinct in code and review.
 
 ## 7. First move
 
-Start **M4**: local kind cluster + Cilium CNI + gVisor `RuntimeClass`. It is the
-cheapest iteration loop and every later milestone stacks on a working cluster. Once
-a gVisor Pod schedules and a trivial NetworkPolicy bites, move to M6 and cut the
-conductor over from subprocess to the `kubernetes` client.
+**M4 and M6 are done** (see their milestones). Three milestones are now unblocked off
+M6 and can run in parallel — **M7** (NetworkPolicy egress matrix, the SEAM-1
+enforcement point; no provisioner dependency), **M8** (Kaniko in-cluster target
+build, which also unstubs the M6 provision seam and carries the M6a `1.1.0` contract
+bump), and **M5** (harness image → GHCR). Recommended next: **M7** — cleanest scope,
+`hardening.spec.ts` + the kind red-team pass already exist to test it against.
+
+> Original first move (M4), now complete: local kind cluster + Cilium CNI + gVisor
+> `RuntimeClass`, then cut the conductor over from subprocess to the `kubernetes`
+> client (M6).

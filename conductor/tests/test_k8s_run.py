@@ -45,6 +45,9 @@ class FakeCoreV1:
     def create_namespaced_service(self, namespace, body):
         self.calls.append("create_namespaced_service")
 
+    def create_namespaced_custom_object(self, group, version, namespace, plural, body):
+        self.calls.append(f"create_crd:{body['kind']}")
+
     def read_namespaced_pod(self, name, namespace):
         return {
             "status": {
@@ -85,8 +88,14 @@ def test_full_engagement_complete(tmp_path):
     )
 
     assert result.status == "complete"
-    # Objects created in order: namespace, target pod+service, attacker secret/cm/pod.
+    # Objects created in order: namespace, egress policy, target pod+service,
+    # attacker secret/cm/pod.
     assert api.calls[0] == "create_namespace"
+    assert api.calls[1] == "create_crd:CiliumNetworkPolicy"
+    # The egress lockdown lands before the attacker Pod — no unpoliced window.
+    assert api.calls.index("create_crd:CiliumNetworkPolicy") < api.calls.index(
+        "create_pod:attacker"
+    )
     assert "create_pod:target" in api.calls
     assert "create_namespaced_service" in api.calls
     assert "create_namespaced_secret" in api.calls
@@ -138,6 +147,25 @@ def test_failed_provision_skips_attacker_but_tears_down(tmp_path):
     data = json.loads(record_path.read_text())
     assert data["provision"]["ok"] is False
     assert "target build failed" in data["provision"]["error"]
+
+
+def test_network_policy_failure_aborts_fail_closed(tmp_path):
+    # If egress can't be locked, the attacker must never launch (fail-closed), but
+    # the namespace is still torn down.
+    api = FakeCoreV1()
+
+    def boom(group, version, namespace, plural, body):
+        raise RuntimeError("cilium apiserver rejected the policy")
+
+    api.create_namespaced_custom_object = boom  # type: ignore[method-assign]
+    result, record_path = run_k8s(
+        REPO, api, provision=_provision(), engagement_id="e7", out_dir=tmp_path,
+        api_key=KEY, sleep=_no_sleep,
+    )
+    assert result.status == "failed"
+    assert not any(c == "create_pod:attacker" for c in api.calls)
+    assert not any(c == "create_pod:target" for c in api.calls)
+    assert api.calls[-1] == "delete_namespace"
 
 
 def test_api_key_resolved_from_env(tmp_path):

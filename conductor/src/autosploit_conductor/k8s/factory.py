@@ -51,3 +51,21 @@ def build_core_v1() -> Any:
             ) from exc
 
     return client.CoreV1Api()
+
+
+def build_custom_objects() -> Any:
+    """Construct a real `kubernetes.client.CustomObjectsApi`, or raise `ConductorError`.
+
+    Used for the CiliumNetworkPolicy CRD (M7). Config is already resolved by the
+    time this is called alongside `build_core_v1`; kept a separate function so the
+    single `kubernetes` import stays confined to this factory module.
+    """
+    try:
+        from kubernetes import client
+    except ImportError as exc:  # pragma: no cover - exercised only without the SDK
+        raise ConductorError(
+            "the kubernetes client is required for the --k8s path; "
+            "install it (e.g. `pip install kubernetes`)"
+        ) from exc
+
+    return client.CustomObjectsApi()

@@ -58,6 +58,20 @@ class FakeCoreV1:
     def create_namespaced_service(self, namespace, body):
         self.calls.append(("create_namespaced_service", {"namespace": namespace, "body": body}))
 
+    def create_namespaced_custom_object(self, group, version, namespace, plural, body):
+        self.calls.append(
+            (
+                "create_namespaced_custom_object",
+                {
+                    "group": group,
+                    "version": version,
+                    "namespace": namespace,
+                    "plural": plural,
+                    "body": body,
+                },
+            )
+        )
+
     def read_namespaced_pod(self, name, namespace):
         self.calls.append(("read_namespaced_pod", {"name": name, "namespace": namespace}))
         return self.pods[name]
@@ -141,6 +155,30 @@ def test_create_attacker_pod_uses_pod_api_in_namespace():
     assert pod["namespace"] == NS
     assert pod["body"]["metadata"]["labels"]["role"] == "attacker"
     assert pod["body"]["spec"]["containers"][0]["image"] == "ghcr.io/x/harness:abc"
+
+
+def test_apply_network_policy_creates_cilium_crd_in_namespace():
+    api = FakeCoreV1()
+    EngagementCluster(api, ID).apply_network_policy()
+    call = next(
+        kw for name, kw in api.calls if name == "create_namespaced_custom_object"
+    )
+    assert call["group"] == "cilium.io"
+    assert call["version"] == "v2"
+    assert call["plural"] == "ciliumnetworkpolicies"
+    assert call["namespace"] == NS
+    assert call["body"]["kind"] == "CiliumNetworkPolicy"
+    assert call["body"]["spec"]["endpointSelector"]["matchLabels"]["role"] == "attacker"
+
+
+def test_apply_network_policy_uses_injected_custom_api():
+    # When a separate CustomObjectsApi is injected, the CRD goes there, not to the
+    # CoreV1 api (mirrors production: CoreV1Api + CustomObjectsApi are distinct).
+    core = FakeCoreV1()
+    custom = FakeCoreV1()
+    EngagementCluster(core, ID, custom=custom).apply_network_policy()
+    assert any(n == "create_namespaced_custom_object" for n in _kinds(custom))
+    assert not any(n == "create_namespaced_custom_object" for n in _kinds(core))
 
 
 def test_create_target_service_returns_cluster_dns():

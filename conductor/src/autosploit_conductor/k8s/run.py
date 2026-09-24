@@ -33,7 +33,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from autosploit_conductor.context import EngagementContext, make_context
-from autosploit_conductor.k8s.client import CoreV1, EngagementCluster
+from autosploit_conductor.k8s.client import CoreV1, CustomObjects, EngagementCluster
 from autosploit_conductor.k8s.watch import map_pod_result, watch_pod
 from autosploit_conductor.launch import _redact
 from autosploit_conductor.record import ProvisionOutcome, write_record
@@ -74,6 +74,7 @@ def run_k8s(
     api: CoreV1,
     *,
     provision: ProvisionFn,
+    custom: CustomObjects | None = None,
     engagement_id: str | None = None,
     out_dir: Path | str = ".",
     api_key: str | None = None,
@@ -95,7 +96,7 @@ def run_k8s(
         api_key = base.get(_API_KEY_ENV, "")
 
     ctx = make_context(repo_ref, engagement_id, out_dir, timeout_s=timeout_s or 3600.0)
-    cluster = EngagementCluster(api, ctx.engagement_id)
+    cluster = EngagementCluster(api, ctx.engagement_id, custom=custom)
 
     provision_outcome = ProvisionOutcome(ok=False, error="provision never attempted")
     result: RunResult | None = None
@@ -104,26 +105,39 @@ def run_k8s(
 
     try:
         cluster.create_namespace()
+        # Fail-closed: lock the attacker's egress (M7 / SEAM-1) before anything
+        # runs in the namespace. If the policy can't be applied, record a failed
+        # outcome and skip provision/attacker entirely — never run unpoliced.
         try:
-            prov = provision(repo_ref, ctx)
-        except Exception as exc:  # noqa: BLE001 — a failed provision is a recorded outcome
-            provision_outcome = ProvisionOutcome(ok=False, error=str(exc))
+            cluster.apply_network_policy()
+        except Exception as exc:  # noqa: BLE001 — a failed egress lockdown is a recorded, fail-closed outcome
             result = RunResult(
-                status="failed", report_path=None, halt_reason=str(exc), exit_code=1
+                status="failed",
+                report_path=None,
+                halt_reason=f"network policy: {exc}",
+                exit_code=1,
             )
         else:
-            provision_outcome = ProvisionOutcome(ok=True, exit_code=0)
-            result = _run_engagement(
-                cluster,
-                ctx,
-                prov,
-                attacker_image=attacker_image,
-                api_key=api_key,
-                timeout_s=timeout_s if timeout_s is not None else ctx.timeout_s,
-                poll_interval_s=poll_interval_s,
-                now=now,
-                sleep=sleep,
-            )
+            try:
+                prov = provision(repo_ref, ctx)
+            except Exception as exc:  # noqa: BLE001 — a failed provision is a recorded outcome
+                provision_outcome = ProvisionOutcome(ok=False, error=str(exc))
+                result = RunResult(
+                    status="failed", report_path=None, halt_reason=str(exc), exit_code=1
+                )
+            else:
+                provision_outcome = ProvisionOutcome(ok=True, exit_code=0)
+                result = _run_engagement(
+                    cluster,
+                    ctx,
+                    prov,
+                    attacker_image=attacker_image,
+                    api_key=api_key,
+                    timeout_s=timeout_s if timeout_s is not None else ctx.timeout_s,
+                    poll_interval_s=poll_interval_s,
+                    now=now,
+                    sleep=sleep,
+                )
     finally:
         _teardown(cluster)
         record_path = _write_record(ctx, provision_outcome, result, started_at)

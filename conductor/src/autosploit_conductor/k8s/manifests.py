@@ -54,6 +54,39 @@ CONFIG_MOUNT_PATH = "/etc/autosploit"
 # k8s (M6a / contract 1.1.0): `target.engagement-<id>.svc.cluster.local`.
 TARGET_SERVICE_NAME = "target"
 
+# --- M7: the egress matrix (orchestration.md §4.1, §6 [1]) -------------------
+#
+# The attacker Pod is the untrusted agent loop. Left open it could exfiltrate to
+# anywhere on the network. M7 pins its egress to exactly three edges and denies
+# the rest, enforced by Cilium. We use a **CiliumNetworkPolicy** (not a plain
+# k8s NetworkPolicy) because the model-API allow is by hostname (`toFQDNs`): a
+# plain NetworkPolicy can only match IP CIDRs, so it cannot distinguish the model
+# API from arbitrary internet — the exact discrimination redteam.sh SEAM-1 tests.
+#
+# Cilium's own selectors use a `k8s:`-prefixed namespace label to cross namespaces.
+CILIUM_API_VERSION = "cilium.io/v2"
+CILIUM_NETWORK_POLICY_KIND = "CiliumNetworkPolicy"
+NETWORK_POLICY_NAME = "attacker-egress"
+NAMESPACE_LABEL = "k8s:io.kubernetes.pod.namespace"
+
+# The model API allowed by FQDN. A tuple so a mirror/proxy host can be added
+# without widening to a CIDR.
+MODEL_API_FQDNS = ("api.openrouter.ai",)
+MODEL_API_PORT = 443
+
+# kube-dns: DNS must be explicitly allowed or a default-deny egress blocks name
+# resolution and every other allow (which resolve names) fails. The L7 `dns`
+# rule is also what lets Cilium learn the `toFQDNs` IPs.
+DNS_NAMESPACE = "kube-system"
+DNS_SELECTOR = {"k8s-app": "kube-dns"}
+DNS_PORT = 53
+
+# The control-plane ingest endpoint (SEAM-1's third allowed edge). Defaults match
+# the deploy: the control-plane Service in the control-plane namespace, on 80.
+CONTROL_PLANE_NAMESPACE = "autosploit-system"
+CONTROL_PLANE_SELECTOR = {"app": "control-plane"}
+CONTROL_PLANE_PORT = 80
+
 
 def namespace_name(engagement_id: str) -> str:
     """`engagement-<id>` — the per-run namespace; deleting it is full teardown."""
@@ -254,5 +287,91 @@ def target_service_manifest(
                     "targetPort": target_port if target_port is not None else port,
                 }
             ],
+        },
+    }
+
+
+def network_policy_manifest(
+    engagement_id: str,
+    *,
+    model_fqdns: tuple[str, ...] = MODEL_API_FQDNS,
+    model_port: int = MODEL_API_PORT,
+    control_plane_namespace: str = CONTROL_PLANE_NAMESPACE,
+    control_plane_selector: Mapping[str, str] = CONTROL_PLANE_SELECTOR,
+    control_plane_port: int = CONTROL_PLANE_PORT,
+) -> dict[str, Any]:
+    """The attacker-egress CiliumNetworkPolicy — SEAM-1 made literal (§4.1).
+
+    Governs the attacker Pod only (`endpointSelector` on `role=attacker` within
+    this engagement). Cilium treats an endpoint with *any* egress rule as
+    default-deny egress, so listing the four allowed edges below denies every
+    other destination by construction:
+
+    1. **DNS** to kube-dns (53 UDP+TCP) with an L7 `dns` visibility rule — both a
+       hard requirement (nothing resolves under default-deny without it) and the
+       mechanism Cilium uses to learn the `toFQDNs` IPs.
+    2. **target** — any port on the same-engagement `role=target` endpoint.
+    3. **model API** — `toFQDNs` on `model_fqdns`, port `model_port` (443). Allowing
+       by name, not CIDR, is why this is a CiliumNetworkPolicy (see module notes).
+    4. **control plane** — the ingest endpoint, `control_plane_port` (80).
+
+    All parameters carry deploy-matching defaults so `run.py`/`factory` can call
+    this with the engagement id alone, and a test or a different deploy can override
+    the control-plane location or the model host without touching the builder.
+    """
+    dns_ports = [
+        {"port": str(DNS_PORT), "protocol": proto} for proto in ("UDP", "TCP")
+    ]
+    egress: list[dict[str, Any]] = [
+        # 1. DNS — must come first conceptually: everything else resolves names.
+        {
+            "toEndpoints": [
+                {"matchLabels": {NAMESPACE_LABEL: DNS_NAMESPACE, **DNS_SELECTOR}}
+            ],
+            "toPorts": [
+                {"ports": dns_ports, "rules": {"dns": [{"matchPattern": "*"}]}}
+            ],
+        },
+        # 2. attacker -> target (same engagement, same namespace), any port.
+        {
+            "toEndpoints": [
+                {"matchLabels": engagement_labels(engagement_id, role="target")}
+            ]
+        },
+        # 3. attacker -> model API, by hostname, on 443 only.
+        {
+            "toFQDNs": [{"matchName": fqdn} for fqdn in model_fqdns],
+            "toPorts": [
+                {"ports": [{"port": str(model_port), "protocol": "TCP"}]}
+            ],
+        },
+        # 4. attacker -> control-plane ingest, on 80 only.
+        {
+            "toEndpoints": [
+                {
+                    "matchLabels": {
+                        NAMESPACE_LABEL: control_plane_namespace,
+                        **control_plane_selector,
+                    }
+                }
+            ],
+            "toPorts": [
+                {"ports": [{"port": str(control_plane_port), "protocol": "TCP"}]}
+            ],
+        },
+    ]
+    return {
+        "apiVersion": CILIUM_API_VERSION,
+        "kind": CILIUM_NETWORK_POLICY_KIND,
+        "metadata": {
+            "name": NETWORK_POLICY_NAME,
+            "namespace": namespace_name(engagement_id),
+            "labels": engagement_labels(engagement_id),
+        },
+        "spec": {
+            "endpointSelector": {
+                "matchLabels": engagement_labels(engagement_id, role="attacker")
+            },
+            "egress": egress,
         },
     }
