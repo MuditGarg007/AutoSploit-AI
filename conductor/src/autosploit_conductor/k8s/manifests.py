@@ -54,6 +54,41 @@ CONFIG_MOUNT_PATH = "/etc/autosploit"
 # k8s (M6a / contract 1.1.0): `target.engagement-<id>.svc.cluster.local`.
 TARGET_SERVICE_NAME = "target"
 
+# --- M8: the in-cluster target build (orchestration.md; roadmap M8) -----------
+#
+# The user repo is built into the target image INSIDE the cluster with Kaniko, so
+# there is no Docker daemon and no docker socket anywhere in the path — mounting a
+# host docker.sock into a build that runs untrusted repo content would hand root on
+# the node to that content, the exact thing this step forbids. Kaniko builds each
+# Dockerfile layer in userspace and pushes the result to the registry.
+#
+# The build runs as a Pod (not a Job) so it reuses the same watcher/`pod_phase`
+# path as the attacker and target: restartPolicy Never + gVisor, watched to a
+# terminal phase, then the target Pod is deployed from the pushed image.
+#
+# Kaniko's executor runs as uid 0 *inside its own container* by design (it rewrites
+# the image root filesystem), so this Pod is deliberately NOT `runAsNonRoot`. Its
+# isolation is the gVisor jail, the absence of any docker socket / hostPath, and no
+# privilege — never in-container non-root. The tests assert that shape.
+BUILD_POD_NAME = "build"
+# Placeholder Kaniko executor ref, kept obvious like `_DEFAULT_ATTACKER_IMAGE` so an
+# unpinned build image can't masquerade as vetted. Digest-pin lands with M9.
+KANIKO_IMAGE = "gcr.io/kaniko-project/executor:latest"
+# Default Dockerfile path within the build context (Dockerfile repos only for MVP;
+# compose is deferred, roadmap §5).
+DEFAULT_DOCKERFILE = "Dockerfile"
+
+# Per-engagement in-cluster registry (M8 registry decision, 2026-09-26): Kaniko
+# pushes the built target image here, and the target Pod is deployed from it. Kept
+# in-namespace so no external push credential ever sits next to untrusted repo
+# content and the whole build path works air-gapped (the env M6/M7 proved on). The
+# push is plain HTTP inside the cluster (`--insecure`); nothing here is exposed off
+# the node. Registry ↔ node-DNS image-pull is a live-proof concern, not a manifest one.
+REGISTRY_POD_NAME = "registry"
+REGISTRY_SERVICE_NAME = "registry"
+REGISTRY_IMAGE = "registry:2"
+REGISTRY_PORT = 5000
+
 # --- M7: the egress matrix (orchestration.md §4.1, §6 [1]) -------------------
 #
 # The engagement namespace holds untrusted code (the agent loop and the target
@@ -116,6 +151,22 @@ def engagement_labels(engagement_id: str, role: str | None = None) -> dict[str, 
 def target_service_dns(engagement_id: str) -> str:
     """Cluster DNS the attacker reaches the target on (scope `host`, M6a)."""
     return f"{TARGET_SERVICE_NAME}.{namespace_name(engagement_id)}.svc.cluster.local"
+
+
+def registry_endpoint(engagement_id: str) -> str:
+    """`host:port` of the per-engagement registry (Kaniko push + target pull, M8).
+
+    The short Service form (`registry.engagement-<id>.svc:5000`) — in-cluster DNS
+    resolves it for the build Pod's push. The image ref appends a repo/tag."""
+    return f"{REGISTRY_SERVICE_NAME}.{namespace_name(engagement_id)}.svc:{REGISTRY_PORT}"
+
+
+def target_image_ref(engagement_id: str) -> str:
+    """The built target image ref: `<registry endpoint>/target:latest` (M8).
+
+    Kaniko's `--destination` and the target Pod's `image` are the same ref — build
+    pushes it, the target runs it."""
+    return f"{registry_endpoint(engagement_id)}/target:latest"
 
 
 def namespace_manifest(engagement_id: str) -> dict[str, Any]:
@@ -303,6 +354,124 @@ def target_service_manifest(
     }
 
 
+def registry_pod_manifest(engagement_id: str) -> dict[str, Any]:
+    """The per-engagement image registry Pod (M8): Kaniko pushes here, target pulls.
+
+    Same engagement invariants as every Pod (gVisor, restartPolicy Never) and
+    role=registry so its Service selects it. Holds only images built this run; the
+    namespace delete wipes it at teardown."""
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": REGISTRY_POD_NAME,
+            "namespace": namespace_name(engagement_id),
+            "labels": engagement_labels(engagement_id, role="registry"),
+        },
+        "spec": {
+            "runtimeClassName": RUNTIME_CLASS,
+            "restartPolicy": "Never",
+            "containers": [
+                {
+                    "name": REGISTRY_POD_NAME,
+                    "image": REGISTRY_IMAGE,
+                    "ports": [{"containerPort": REGISTRY_PORT}],
+                }
+            ],
+        },
+    }
+
+
+def registry_service_manifest(engagement_id: str) -> dict[str, Any]:
+    """The Service giving the registry stable DNS (`registry.<ns>.svc:5000`, M8)."""
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": REGISTRY_SERVICE_NAME,
+            "namespace": namespace_name(engagement_id),
+            "labels": engagement_labels(engagement_id),
+        },
+        "spec": {
+            "selector": engagement_labels(engagement_id, role="registry"),
+            "ports": [{"port": REGISTRY_PORT, "targetPort": REGISTRY_PORT}],
+        },
+    }
+
+
+BUILD_CONTEXT_MOUNT = "/workspace"
+
+
+def kaniko_build_pod_manifest(
+    engagement_id: str,
+    *,
+    context: str,
+    destination: str,
+    dockerfile: str = DEFAULT_DOCKERFILE,
+    image: str = KANIKO_IMAGE,
+    context_configmap: str | None = None,
+    context_mount: str = BUILD_CONTEXT_MOUNT,
+) -> dict[str, Any]:
+    """The Kaniko build Pod: clone `context`, build `dockerfile`, push `destination`.
+
+    `context` is a Kaniko context URI (e.g. `git://host/org/repo#ref`); `destination`
+    is the registry ref the built image is pushed to and the target Pod later runs
+    from. Dockerfile repos only for MVP (compose deferred, roadmap §5).
+
+    `context_configmap`, when given, mounts that ConfigMap read-only at
+    `context_mount` and is meant to pair with a `dir://<context_mount>` `context`:
+    it supplies the build context **from inside the cluster**, so Kaniko needs no
+    external egress to fetch it. This is the in-cluster-context path the M8 live
+    proof uses under the M7 default-deny egress, which denies the build Pod any
+    external git host (external clone is a tracked open item; see roadmap §5 / M5).
+
+    Security-load-bearing (module docstring, roadmap M8 exit): `runtimeClassName:
+    gvisor` and `restartPolicy: Never` like every engagement Pod, and — the whole
+    point of building with Kaniko — **no docker socket, no hostPath, not
+    privileged**. A ConfigMap context volume is none of those: it is in-cluster
+    API data, not a host mount. Kaniko runs as root inside its own container by
+    design, so this is intentionally not `runAsNonRoot`; the isolation is the
+    gVisor jail and the absence of any host mount or privilege. The tests assert
+    each of these.
+    """
+    container: dict[str, Any] = {
+        "name": BUILD_POD_NAME,
+        "image": image,
+        "args": [
+            f"--context={context}",
+            f"--dockerfile={dockerfile}",
+            f"--destination={destination}",
+            # The per-engagement registry is plain HTTP inside the cluster (no TLS,
+            # nothing exposed off the node). Without this Kaniko attempts HTTPS to
+            # the registry Service and the push fails. Push-side only; base-image
+            # pulls from a real registry still use TLS.
+            "--insecure",
+        ],
+    }
+    spec: dict[str, Any] = {
+        "runtimeClassName": RUNTIME_CLASS,
+        "restartPolicy": "Never",
+        "containers": [container],
+    }
+    if context_configmap is not None:
+        container["volumeMounts"] = [
+            {"name": "build-context", "mountPath": context_mount, "readOnly": True}
+        ]
+        spec["volumes"] = [
+            {"name": "build-context", "configMap": {"name": context_configmap}}
+        ]
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": BUILD_POD_NAME,
+            "namespace": namespace_name(engagement_id),
+            "labels": engagement_labels(engagement_id, role="build"),
+        },
+        "spec": spec,
+    }
+
+
 def network_policy_manifest(
     engagement_id: str,
     *,
@@ -323,6 +492,8 @@ def network_policy_manifest(
        hard requirement (nothing resolves under default-deny without it) and the
        mechanism Cilium uses to learn the `toFQDNs` IPs.
     2. **target** — any port on the same-engagement `role=target` endpoint.
+    2b. **registry** (M8) — the same-engagement `role=registry` endpoint on 5000, so
+       the Kaniko build Pod can push the built image; intra-namespace only.
     3. **model API** — `toFQDNs` on `model_fqdns`, port `model_port` (443). Allowing
        by name, not CIDR, is why this is a CiliumNetworkPolicy (see module notes).
     4. **control plane** — the ingest endpoint, `control_plane_port` (80).
@@ -349,6 +520,19 @@ def network_policy_manifest(
             "toEndpoints": [
                 {"matchLabels": engagement_labels(engagement_id, role="target")}
             ]
+        },
+        # 2b. build -> registry (M8): the Kaniko Pod pushes the built image to the
+        # in-namespace registry on 5000. Intra-namespace, same engagement; the empty
+        # endpointSelector means this rule is what lets that push through the
+        # otherwise default-deny egress. Registry holds only this run's images and
+        # dies with the namespace.
+        {
+            "toEndpoints": [
+                {"matchLabels": engagement_labels(engagement_id, role="registry")}
+            ],
+            "toPorts": [
+                {"ports": [{"port": str(REGISTRY_PORT), "protocol": "TCP"}]}
+            ],
         },
         # 3. attacker -> model API, by hostname, on 443 only.
         {

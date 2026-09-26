@@ -64,9 +64,11 @@ class K8sProvision:
     service_port: int | None = None
 
 
-# The provision seam: `(repo_ref, ctx) -> K8sProvision`. Raising means the target
-# never came up — a recorded failed(provision), not a crash (mirrors Phase A §8).
-ProvisionFn = Callable[[str, EngagementContext], K8sProvision]
+# The provision seam: `(repo_ref, ctx, cluster) -> K8sProvision`. The real M8
+# provisioner drives the cluster (registry deploy + Kaniko build) through the same
+# `EngagementCluster` the orchestrator holds, so it is handed in. Raising means the
+# target never came up — a recorded failed(provision), not a crash (mirrors §8).
+ProvisionFn = Callable[[str, EngagementContext, EngagementCluster], K8sProvision]
 
 
 def run_k8s(
@@ -119,7 +121,7 @@ def run_k8s(
             )
         else:
             try:
-                prov = provision(repo_ref, ctx)
+                prov = provision(repo_ref, ctx, cluster)
             except Exception as exc:  # noqa: BLE001 — a failed provision is a recorded outcome
                 provision_outcome = ProvisionOutcome(ok=False, error=str(exc))
                 result = RunResult(

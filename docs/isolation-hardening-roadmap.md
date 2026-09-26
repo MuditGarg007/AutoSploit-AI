@@ -183,7 +183,7 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
   there is internet; these three ride the full `redteam.sh` SEAM-1 pass on the H3
   GKE deploy.
 
-### M8 — Kaniko in-cluster target build
+### M8 — Kaniko in-cluster target build — DONE (live on kind 2026-09-27)
 
 - **Work:** build the user repo image **in-cluster with Kaniko** (no docker socket),
   push to the registry, and deploy the target Pod from the built image. **Dockerfile
@@ -191,6 +191,20 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
 - **Exit:** a real Dockerfile repo goes clone → Kaniko build → push → target Pod
   running → attacker exploits it, with no docker socket anywhere in the path.
 - **Depends on:** M6 (namespace + target deploy), M5 (registry path).
+- **Proven:** `scripts/m8-proof.sh` runs the conductor's own manifests live on kind —
+  registry Pod up → Kaniko build (gVisor, no docker socket) → push to the
+  per-engagement HTTP registry (`--insecure`) → the node's containerd pulls the built
+  image → the target Pod runs under gVisor (`uname -r` → `*-gvisor`) and serves. Two
+  node-pull facts the live proof pinned down and `m4-bootstrap.sh` step 4b now sets:
+  the node does **not** use coredns (so `registry.<ns>.svc` won't resolve there) and
+  the registry is HTTP-only — solved by containerd `config_path` + a per-engagement
+  `certs.d` `hosts.toml` mapping the registry name → `http://<ClusterIP>:5000`.
+- **Open (egress ingestion, → M5):** under the M7 default-deny egress the build Pod
+  can reach **no external git host or base-image registry**, so an external
+  `git clone` / `FROM` base pull is denied by design. The proof therefore feeds the
+  build context from an in-cluster ConfigMap (`dir://`) and isolates the M8 machinery
+  from that egress interaction. Closing it needs the M5 in-cluster repo/base mirror;
+  tracked in `docs/deferred-open-items.md`.
 
 ### M9 — Engagement Helm chart
 

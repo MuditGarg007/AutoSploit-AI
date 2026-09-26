@@ -181,6 +181,33 @@ def test_apply_network_policy_uses_injected_custom_api():
     assert not any(n == "create_namespaced_custom_object" for n in _kinds(core))
 
 
+def test_create_build_pod_uses_pod_api_with_kaniko_args():
+    api = FakeCoreV1()
+    EngagementCluster(api, ID).create_build_pod(
+        context="git://github.com/acme/vuln-app#main",
+        destination="reg/target:latest",
+    )
+    pod = next(kw for name, kw in api.calls if name == "create_namespaced_pod")
+    assert pod["namespace"] == NS
+    assert pod["body"]["metadata"]["labels"]["role"] == "build"
+    args = pod["body"]["spec"]["containers"][0]["args"]
+    assert "--context=git://github.com/acme/vuln-app#main" in args
+    assert "--destination=reg/target:latest" in args
+
+
+def test_create_registry_pod_and_service_return_endpoint():
+    api = FakeCoreV1()
+    c = EngagementCluster(api, ID)
+    c.create_registry_pod()
+    endpoint = c.create_registry_service()
+    assert endpoint == "registry.engagement-eng1.svc:5000"
+    pod = next(kw for name, kw in api.calls if name == "create_namespaced_pod")
+    assert pod["body"]["metadata"]["labels"]["role"] == "registry"
+    assert pod["namespace"] == NS
+    svc = next(kw for name, kw in api.calls if name == "create_namespaced_service")
+    assert svc["body"]["spec"]["ports"][0]["port"] == 5000
+
+
 def test_create_target_service_returns_cluster_dns():
     api = FakeCoreV1()
     dns = EngagementCluster(api, ID).create_target_service(port=80, target_port=3000)

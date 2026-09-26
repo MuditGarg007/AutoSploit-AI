@@ -54,6 +54,19 @@ def write_run_config(context: EngagementContext, scope_path: Path) -> Path:
     return run_toml
 
 
+def render_run_config(
+    context: EngagementContext, scope_basename: str, output_dir: str
+) -> str:
+    """Return the run.toml text (no disk write) — the ConfigMap payload for Phase B.
+
+    Phase A writes run.toml to the out-dir (`write_run_config`); Phase B mounts it
+    from a ConfigMap, so the k8s provisioner needs the text, not a file. Same
+    renderer, so both paths stay in lockstep. `scope_basename` is the sibling
+    scope file's bare name (mounted next to run.toml); `output_dir` is a Pod-local
+    path the harness writes its report into."""
+    return _render(context, scope_basename, output_dir)
+
+
 def _render(context: EngagementContext, scope_basename: str, output_dir: str) -> str:
     """Render the run.toml text. `scope_file` is the bare basename (§3.2);
     `output_dir` is a POSIX-style path so it round-trips through TOML on Windows.

@@ -86,6 +86,23 @@ metadata:
 handler: runsc
 YAML
 
+# 4b. M8 target-pull path: let the node's containerd pull the per-engagement
+#     in-cluster registry over plain HTTP. The node does NOT use coredns, so the
+#     `registry.<ns>.svc` name won't resolve there and the registry is HTTP-only;
+#     `config_path` turns on the certs.d hosts.toml mechanism, and the conductor
+#     (M8 live proof: scripts/m8-proof.sh) drops a per-engagement hosts.toml that
+#     maps that name -> http://<registry ClusterIP>:5000. Idempotent.
+say "enabling containerd certs.d for the M8 in-cluster registry pull"
+docker exec "$NODE" bash -c '
+  set -e; CFG=/etc/containerd/config.toml
+  mkdir -p /etc/containerd/certs.d
+  if ! grep -q "certs.d" "$CFG"; then
+    cp "$CFG" "$CFG.bak.m8.$(date +%s)"
+    printf "\n[plugins.\"io.containerd.grpc.v1.cri\".registry]\n  config_path = \"/etc/containerd/certs.d\"\n" >> "$CFG"
+    systemctl restart containerd
+  fi'
+kubectl wait --for=condition=Ready node --all --timeout=120s
+
 say "M4 substrate ready"
 
 # 5. Optional smoke: prove both exit criteria.

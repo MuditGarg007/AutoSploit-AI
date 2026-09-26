@@ -129,6 +129,123 @@ def test_service_target_port_defaults_to_port():
     assert svc["spec"]["ports"][0]["targetPort"] == 8080
 
 
+# --- M8: the Kaniko in-cluster target build ----------------------------------
+
+
+def _build_pod():
+    return m.kaniko_build_pod_manifest(
+        ID,
+        context="git://github.com/acme/vuln-app#refs/heads/main",
+        destination="registry.engagement.svc/target:latest",
+    )
+
+
+def test_build_pod_runs_kaniko_once_under_gvisor():
+    pod = _build_pod()
+    assert pod["kind"] == "Pod"
+    assert pod["metadata"]["namespace"] == f"engagement-{ID}"
+    assert pod["metadata"]["labels"] == {"engagement": ID, "role": "build"}
+    # Same engagement invariants as every other Pod: jailed, run exactly once.
+    assert pod["spec"]["runtimeClassName"] == "gvisor"
+    assert pod["spec"]["restartPolicy"] == "Never"
+
+
+def test_build_pod_passes_context_dockerfile_destination_to_kaniko():
+    pod = _build_pod()
+    container = pod["spec"]["containers"][0]
+    assert container["image"] == m.KANIKO_IMAGE
+    assert container["args"] == [
+        "--context=git://github.com/acme/vuln-app#refs/heads/main",
+        "--dockerfile=Dockerfile",
+        "--destination=registry.engagement.svc/target:latest",
+        # Push to the in-cluster HTTP registry (no TLS) — load-bearing for M8.
+        "--insecure",
+    ]
+
+
+def test_build_pod_dockerfile_and_image_overridable():
+    pod = m.kaniko_build_pod_manifest(
+        ID,
+        context="dir:///workspace",
+        destination="reg/target:1",
+        dockerfile="docker/Prod.Dockerfile",
+        image="gcr.io/kaniko-project/executor@sha256:deadbeef",
+    )
+    container = pod["spec"]["containers"][0]
+    assert container["image"] == "gcr.io/kaniko-project/executor@sha256:deadbeef"
+    assert "--dockerfile=docker/Prod.Dockerfile" in container["args"]
+
+
+def test_build_pod_has_no_docker_socket_no_hostpath_no_privilege():
+    # The whole reason to build with Kaniko: no daemon, no socket, no host mount,
+    # no privilege — so untrusted repo content can never reach the node (roadmap M8
+    # exit). Kaniko is root INSIDE its container by design, so this is deliberately
+    # not runAsNonRoot; isolation is gVisor + the absence of any of the below.
+    pod = _build_pod()
+    spec = pod["spec"]
+    assert "volumes" not in spec
+    container = spec["containers"][0]
+    assert "volumeMounts" not in container
+    sc = container.get("securityContext", {})
+    assert sc.get("privileged") is not True
+    # No docker socket / host path smuggled in anywhere in the serialized spec.
+    blob = json.dumps(pod)
+    assert "docker.sock" not in blob
+    assert "hostPath" not in blob
+
+
+def test_build_pod_mounts_in_cluster_context_configmap_readonly():
+    # The M8 live-proof path: supply the build context from an in-cluster ConfigMap
+    # (paired with a dir:// context) so Kaniko needs no external egress under the
+    # M7 default-deny matrix. A ConfigMap volume is API data, not a host mount.
+    pod = m.kaniko_build_pod_manifest(
+        ID,
+        context=f"dir://{m.BUILD_CONTEXT_MOUNT}",
+        destination="reg/target:1",
+        context_configmap="build-context",
+    )
+    spec = pod["spec"]
+    vol = spec["volumes"][0]
+    assert vol["configMap"]["name"] == "build-context"
+    mount = spec["containers"][0]["volumeMounts"][0]
+    assert mount["name"] == vol["name"]
+    assert mount["mountPath"] == m.BUILD_CONTEXT_MOUNT
+    assert mount["readOnly"] is True
+    # Still no host mount / socket / privilege — the invariant holds with a context.
+    blob = json.dumps(pod)
+    assert "hostPath" not in blob
+    assert "docker.sock" not in blob
+
+
+# --- M8: the per-engagement in-cluster registry ------------------------------
+
+
+def test_registry_endpoint_and_image_ref():
+    assert m.registry_endpoint(ID) == f"registry.engagement-{ID}.svc:5000"
+    assert m.target_image_ref(ID) == f"registry.engagement-{ID}.svc:5000/target:latest"
+
+
+def test_registry_pod_runs_under_gvisor_with_role_registry():
+    pod = m.registry_pod_manifest(ID)
+    assert pod["kind"] == "Pod"
+    assert pod["metadata"]["namespace"] == f"engagement-{ID}"
+    assert pod["metadata"]["labels"]["role"] == "registry"
+    assert pod["spec"]["runtimeClassName"] == "gvisor"
+    assert pod["spec"]["restartPolicy"] == "Never"
+    c = pod["spec"]["containers"][0]
+    assert c["image"] == m.REGISTRY_IMAGE
+    assert c["ports"][0]["containerPort"] == 5000
+
+
+def test_registry_service_selects_registry_pod_on_5000():
+    svc = m.registry_service_manifest(ID)
+    assert svc["kind"] == "Service"
+    assert svc["spec"]["selector"] == {"engagement": ID, "role": "registry"}
+    p = svc["spec"]["ports"][0]
+    assert p["port"] == 5000
+    assert p["targetPort"] == 5000
+
+
 # --- M7: the egress matrix ---------------------------------------------------
 
 
@@ -203,12 +320,28 @@ def test_network_policy_allows_control_plane_ingest_on_80_only():
     assert port == {"port": "80", "protocol": "TCP"}
 
 
-def test_network_policy_denies_everything_else_by_construction():
-    # The security property: exactly the four allowed edges, nothing more. Cilium
-    # makes an endpoint with any egress rule default-deny, so "only these four"
-    # IS the deny of Postgres/Redis/Redpanda and arbitrary internet.
+def test_network_policy_allows_build_to_registry_on_5000_only():
+    # M8: the Kaniko build Pod pushes to the in-namespace registry. Intra-namespace,
+    # role=registry, 5000 only — without this the fail-closed egress denies the push.
     np = m.network_policy_manifest(ID)
-    assert len(_egress_rules(np)) == 4
+    reg = next(
+        r
+        for r in _egress_rules(np)
+        if r.get("toEndpoints")
+        and r["toEndpoints"][0]["matchLabels"].get("role") == "registry"
+    )
+    assert reg["toEndpoints"][0]["matchLabels"] == {"engagement": ID, "role": "registry"}
+    port = reg["toPorts"][0]["ports"][0]
+    assert port == {"port": "5000", "protocol": "TCP"}
+
+
+def test_network_policy_denies_everything_else_by_construction():
+    # The security property: exactly the allowed edges, nothing more. Cilium makes
+    # an endpoint with any egress rule default-deny, so "only these" IS the deny of
+    # Postgres/Redis/Redpanda and arbitrary internet. Five edges: DNS, target,
+    # registry (M8), model API, control-plane.
+    np = m.network_policy_manifest(ID)
+    assert len(_egress_rules(np)) == 5
 
 
 def test_network_policy_overrides_reach_control_plane_and_model():

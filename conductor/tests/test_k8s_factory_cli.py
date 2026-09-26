@@ -43,18 +43,19 @@ def test_factory_raises_conductor_error_without_sdk():
 @_needs_no_sdk
 def test_cli_k8s_path_reports_cleanly_without_sdk(capsys):
     # --k8s with no SDK: main catches the ConductorError and exits 1, no traceback.
-    rc = main(["run", "some-repo", "--k8s"])
+    # --target-port is supplied so the port guard passes and we reach the SDK call.
+    rc = main(["run", "some-repo", "--k8s", "--target-port", "8080"])
     assert rc == 1
     assert "conductor:" in capsys.readouterr().err
 
 
-def test_phaseb_provision_is_not_implemented():
-    # The M8 seam is honestly a stub; run_k8s turns this into failed(provision).
-    from autosploit_conductor.context import EngagementContext
-    from autosploit_conductor.k8s.provision import phaseb_provision
+def test_cli_k8s_requires_target_port(capsys):
+    # --k8s without --target-port is a clean ConductorError exit (rc 1), no traceback,
+    # BEFORE any SDK/cluster contact — so this holds with or without the SDK.
+    rc = main(["run", "some-repo", "--k8s"])
+    assert rc == 1
+    assert "--target-port" in capsys.readouterr().err
 
-    ctx = EngagementContext(
-        engagement_id="x", out_dir=__import__("pathlib").Path("."), repo_ref="r", timeout_s=1.0
-    )
-    with pytest.raises(NotImplementedError):
-        phaseb_provision("repo", ctx)
+
+def test_target_port_flag_parses():
+    assert _parse_args(["run", "repo", "--k8s", "--target-port", "3000"]).target_port == 3000

@@ -61,7 +61,7 @@ class FakeCoreV1:
 
 
 def _provision(files=None, image="img:built", port=3000):
-    def fn(repo_ref, ctx):
+    def fn(repo_ref, ctx, cluster):
         return K8sProvision(
             config_files=files or {"scope.yaml": "target: {host: svc}", "run.toml": "[model]\n"},
             target_image=image,
@@ -131,7 +131,7 @@ def test_attacker_logs_saved_and_key_redacted(tmp_path):
 def test_failed_provision_skips_attacker_but_tears_down(tmp_path):
     api = FakeCoreV1()
 
-    def boom(repo_ref, ctx):
+    def boom(repo_ref, ctx, cluster):
         raise RuntimeError("target build failed")
 
     result, record_path = run_k8s(

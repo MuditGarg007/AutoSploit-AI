@@ -70,6 +70,34 @@ def watch_pod(
         phase = cluster.pod_phase(name)
 
 
+def wait_pod_running(
+    cluster: PodStatusSource,
+    name: str,
+    *,
+    timeout_s: float,
+    poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
+    now: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Poll `name` until it is `Running`, returning True; False on Failed/timeout.
+
+    Unlike `watch_pod` (which waits for a terminal phase), this waits for a
+    long-lived Pod — the M8 registry — to come up so a client can use it, then
+    returns. A `Failed`/`Succeeded` phase (the registry died) or a timeout is a
+    False so the caller can treat it as a failed provision. Always polls at least
+    once."""
+    deadline = now() + timeout_s
+    while True:
+        phase = cluster.pod_phase(name)
+        if phase == "Running":
+            return True
+        if phase in TERMINAL_PHASES:
+            return False
+        if now() >= deadline:
+            return False
+        sleep(poll_interval_s)
+
+
 def map_pod_result(outcome: PodOutcome) -> RunResult:
     """Map a `PodOutcome` to the shared `RunResult` (Seam B semantics).
 

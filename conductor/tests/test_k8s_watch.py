@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from autosploit_conductor.k8s.watch import PodOutcome, map_pod_result, watch_pod
+from autosploit_conductor.k8s.watch import (
+    PodOutcome,
+    map_pod_result,
+    wait_pod_running,
+    watch_pod,
+)
 
 
 class ScriptedCluster:
@@ -79,6 +84,28 @@ def test_timeout_returns_last_phase_flagged():
     )
     assert outcome.timed_out is True
     assert outcome.phase == "Running"
+
+
+# --- wait_pod_running (M8 registry readiness) --------------------------------
+
+
+def test_wait_running_true_when_pod_comes_up():
+    clock = FakeClock()
+    cluster = ScriptedCluster(["Pending", "Running"])
+    assert wait_pod_running(cluster, "registry", timeout_s=100, now=clock.now, sleep=clock.sleep) is True
+    assert clock.sleeps == 1
+
+
+def test_wait_running_false_when_pod_dies():
+    # A registry that reaches a terminal phase never became usable -> False.
+    cluster = ScriptedCluster(["Failed"])
+    assert wait_pod_running(cluster, "registry", timeout_s=100, now=FakeClock().now, sleep=lambda s: None) is False
+
+
+def test_wait_running_false_on_timeout():
+    clock = FakeClock(step=10.0)
+    cluster = ScriptedCluster(["Pending"])  # never Running
+    assert wait_pod_running(cluster, "registry", timeout_s=25, now=clock.now, sleep=clock.sleep) is False
 
 
 # --- mapping -----------------------------------------------------------------

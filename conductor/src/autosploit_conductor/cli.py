@@ -51,20 +51,28 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _run_k8s(args: argparse.Namespace) -> tuple[object, Path | None]:
     """Phase B path — drive the cluster (roadmap M6). Imported lazily so the
 
-    Phase A path never needs the kubernetes SDK. The provision seam is the M8
-    stub for now, so this path stands the namespace up, records a clean
-    failed(provision), and tears down until the in-cluster builder lands.
+    Phase A path never needs the kubernetes SDK. The M8 provisioner (Kaniko
+    in-cluster build) drives the cluster through the same EngagementCluster the
+    orchestrator holds, so it is passed as the injected provision seam with the
+    operator-supplied target port bound in.
     """
+    import functools
+
+    from autosploit_conductor.context import ContextError
     from autosploit_conductor.k8s.factory import build_core_v1, build_custom_objects
     from autosploit_conductor.k8s.provision import phaseb_provision
     from autosploit_conductor.k8s.run import run_k8s
 
+    if args.target_port is None:
+        raise ContextError("--k8s requires --target-port (the port the target listens on)")
+
     api = build_core_v1()
     custom = build_custom_objects()
+    provision = functools.partial(phaseb_provision, target_port=args.target_port)
     return run_k8s(
         args.repo,
         api,
-        provision=phaseb_provision,
+        provision=provision,
         custom=custom,
         engagement_id=args.engagement_id,
         out_dir=args.out,
@@ -106,6 +114,14 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Phase B: run the engagement on a Kubernetes cluster (namespace per "
         "engagement, gVisor Pods, Service) instead of local subprocesses (roadmap M6)",
+    )
+    run_p.add_argument(
+        "--target-port",
+        type=int,
+        default=None,
+        help="Phase B (--k8s): the port the built target listens on (M8). Required "
+        "with --k8s: a Dockerfile repo does not reliably declare it, so the operator "
+        "supplies it; it becomes the scope port the attacker is allowed to reach.",
     )
 
     return parser.parse_args(argv)

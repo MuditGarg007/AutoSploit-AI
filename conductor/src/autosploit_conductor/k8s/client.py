@@ -181,6 +181,53 @@ class EngagementCluster:
 
     # --- target-side objects (untrusted: never see the key) ------------------
 
+    def create_registry_pod(self) -> None:
+        """Deploy the per-engagement in-cluster registry Pod (M8 push/pull target)."""
+        self._api.create_namespaced_pod(
+            namespace=self.namespace,
+            body=m.registry_pod_manifest(self.engagement_id),
+        )
+
+    def create_registry_service(self) -> str:
+        """Expose the registry via a Service; return its `host:port` endpoint (M8)."""
+        self._api.create_namespaced_service(
+            namespace=self.namespace,
+            body=m.registry_service_manifest(self.engagement_id),
+        )
+        return m.registry_endpoint(self.engagement_id)
+
+    def create_build_pod(
+        self,
+        *,
+        context: str,
+        destination: str,
+        dockerfile: str = m.DEFAULT_DOCKERFILE,
+        image: str = m.KANIKO_IMAGE,
+        context_configmap: str | None = None,
+    ) -> None:
+        """Launch the Kaniko build Pod that builds the target image (M8).
+
+        Create-only, like the other Pod builders: the provision layer watches it to
+        a terminal phase and deploys the target from `destination` on success. The
+        build runs untrusted repo content, so — same as the target — it never sees
+        the key, and (the point of Kaniko) has no docker socket in its spec.
+
+        `context_configmap`, when set, supplies the build context from an in-cluster
+        ConfigMap (pair with a `dir://` `context`) so the build needs no external
+        egress — the M8 live-proof path under the M7 default-deny matrix.
+        """
+        self._api.create_namespaced_pod(
+            namespace=self.namespace,
+            body=m.kaniko_build_pod_manifest(
+                self.engagement_id,
+                context=context,
+                destination=destination,
+                dockerfile=dockerfile,
+                image=image,
+                context_configmap=context_configmap,
+            ),
+        )
+
     def create_target_pod(self, image: str, *, container_port: int) -> None:
         """Deploy the target Pod built from the user repo (gVisor, no key)."""
         self._api.create_namespaced_pod(

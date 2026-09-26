@@ -104,6 +104,18 @@ real cluster; the Q1 confirm and isolation-provider decision are both settled ab
   Component D to make that extraction cheap. Not yet done.
   *(control-plane §11)*
 
+- **Build-context ingestion under default-deny egress (M8 × M7 → M5).** The M7
+  egress matrix governs the whole engagement namespace, so the Kaniko build Pod can
+  reach no external git host or base-image registry: an external `git clone` and any
+  `FROM <external>` base pull are denied by design. The M8 live proof
+  (`scripts/m8-proof.sh`) sidesteps this by feeding the build context from an
+  in-cluster ConfigMap (`dir://`) with a base already resolvable, isolating the M8
+  machinery from the egress interaction. Real user repos need an **in-cluster
+  repo/base mirror** (the M5 registry path) that Kaniko clones and pulls from over an
+  allowed intra-namespace edge — not a widening of the egress matrix. Until M5 lands,
+  `--k8s` on an arbitrary external repo will fail the clone under the live policy.
+  *(roadmap M8 "Open"; roadmap M5; orchestration.md §5)*
+
 ---
 
 ## Security / release (Component H)
