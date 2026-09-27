@@ -222,6 +222,11 @@ Move the same two roles onto the cluster; add isolation + egress control.
 8. **Kaniko target build** — build the user repo in-cluster; push; deploy target
    from the built image.
 9. **Helm chart** — package the engagement resources; conductor installs per run.
+   *Done (M9):* `deploy/helm/engagement/` charts the **workload** (target Pod+Service,
+   attacker Pod, run-config); the conductor installs/uninstalls it via `k8s/helm.py`.
+   The namespace, the default-deny CiliumNetworkPolicy, and the model-key Secret stay
+   **imperative and fail-closed ahead of the release** (the M7 lockdown must exist
+   before any Pod) — see `isolation-hardening-roadmap.md` §M9.
 
 **Phase C — control plane & scale (overview §6 steps 2-4).**
 10. **Control plane (TS)** — auth (GitHub OAuth), Postgres engagement CRUD, Redis

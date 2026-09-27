@@ -1,10 +1,12 @@
 # Isolation Hardening — Roadmap (Step 3)
 
-> **Status: in progress (updated 2026-09-27).** Done: M4, M6, M7, M8. M7 enforcement
+> **Status: in progress (updated 2026-09-28).** Done: M4, M6, M7, M8, M9. M7 enforcement
 > proven live on kind (its two internet-dependent SEAM-1 assertions ride the H3 online
 > run); M8 Kaniko in-cluster build proven live on kind (its external clone/base
-> ingestion is deferred to M5 — see the M8 section).
-> Open: M5, M6a, M9, H3. Execution roadmap for build-order step 3
+> ingestion is deferred to M5 — see the M8 section); M9 engagement Helm chart proven
+> live on kind (`scripts/m9-proof.sh`), with the namespace/netpol/secret kept imperative
+> and fail-closed ahead of the release — see the M9 section.
+> Open: M5, M6a, H3. Execution roadmap for build-order step 3
 > (`overview.md §6`): move engagement execution off plain local Docker onto a
 > hardened Kubernetes substrate so untrusted user repos run safely isolated. This is
 > **provisioner + conductor Phase B** (`orchestration.md §9`). It is a tracking and
@@ -208,14 +210,38 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
   from that egress interaction. Closing it needs the M5 in-cluster repo/base mirror;
   tracked in `docs/deferred-open-items.md`.
 
-### M9 — Engagement Helm chart
+### M9 — Engagement Helm chart — DONE (live on kind 2026-09-28)
 
-- **Work:** package the per-engagement resources (namespace, attacker + target Pods,
-  Service, NetworkPolicy, RuntimeClass defaults) as a Helm chart the conductor
+- **Work:** package the per-engagement resources as a Helm chart the conductor
   installs per run. The current chart covers only the control plane.
 - **Exit:** the conductor stands up an engagement by installing the chart and tears
   it down by deleting the release/namespace.
 - **Depends on:** M6, M7, M8.
+- **Status — DONE.** Built as `deploy/helm/engagement/` (chart) +
+  `conductor/src/autosploit_conductor/k8s/helm.py` (an injectable
+  `install_release`/`uninstall_release` seam, isolated the same way `k8s/factory.py`
+  isolates the `kubernetes` client). `k8s/run.run_k8s` now stands the workload up with
+  `helm.install_release(...)` and tears it down with `helm.uninstall_release(...)`
+  before `delete_namespace()`. The four imperative builder calls the chart supersedes
+  (`create_target_pod`, `create_target_service`, `apply_configmap`,
+  `create_attacker_pod`) and their manifest/client builders were then deleted as pure
+  cleanup. Landed test-first across five phases (chart render test, helm-seam unit
+  tests, reworked `test_k8s_run`, dead-code removal, live proof); full k8s suite green.
+  **Live proof:** `scripts/m9-proof.sh` (mirrors `m8-proof.sh`) — namespace + netpol
+  imperative, `helm install` the chart with stand-in images (nginx target, curl
+  attacker), attacker → target reachable and egress enforced, then `helm uninstall` +
+  namespace delete with nothing left behind.
+- **Deviation — namespace / netpol / secret stay imperative, only the workload is
+  charted.** The chart renders the target Pod+Service, the attacker Pod, and the
+  run-config; the `engagement-<id>` namespace, the CiliumNetworkPolicy default-deny
+  baseline, and the model-key Secret are still applied imperatively by `run_k8s`
+  *before* the release. Rationale: the M7 lockdown must be **fail-closed and in place
+  before any Pod exists** (§M7) — if the netpol can't apply, the engagement records
+  `failed` and never launches the attacker; folding it into the release would let the
+  workload Pods and the policy race. The namespace must exist before either the policy
+  or the release, and the Secret is a trusted conductor-side injection kept off the
+  untrusted chart-values path. So the split is deliberate: imperative security
+  scaffold first, then Helm for the workload.
 
 ### H3 — Exit gate: red-team green on real GKE
 
