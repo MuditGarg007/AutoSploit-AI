@@ -1,0 +1,14 @@
+# Keep the build context (and image) free of local state and — load-bearing — of
+# secrets: harness/.env holds OPENROUTER_API_KEY on a dev box and must never enter
+# the image (the CI leak scan enforces this too).
+.env
+.venv
+.python-version
+.pytest_cache
+**/__pycache__
+**/*.pyc
+configs
+contracts
+eval
+tests
+README.md.orig
