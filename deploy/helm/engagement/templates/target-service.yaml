@@ -1,0 +1,18 @@
+{{/*
+The Service giving the target stable cluster DNS the attacker connects to (§4).
+Its name is fixed (`target`) and unprefixed because its DNS
+(`target.<namespace>.svc.cluster.local`) IS the scope host (M6a). Selects the
+target Pod by `role=target`. Mirrors k8s/manifests.py:target_service_manifest.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: target
+  labels:
+    {{- include "engagement.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "engagement.roleLabels" (dict "Values" .Values "role" "target") | nindent 4 }}
+  ports:
+    - port: {{ .Values.target.port }}
+      targetPort: {{ .Values.target.targetPort | default .Values.target.port }}

@@ -1,0 +1,20 @@
+apiVersion: v2
+name: engagement
+description: >-
+  Autosploit per-engagement workload — the ephemeral target Pod, its Service,
+  the attacker Pod, and the run-config ConfigMap for one engagement run.
+# This is the EPHEMERAL per-engagement chart (docs/orchestration.md §4, §6),
+# installed as a Helm release by the conductor and uninstalled at teardown. It is
+# deliberately disjoint from deploy/helm/control-plane (the long-lived plane): two
+# workloads, two lifecycles, two charts.
+#
+# What this chart does NOT own, on purpose: the Namespace, the model-key Secret,
+# and the CiliumNetworkPolicy egress matrix (M7). Those are applied imperatively by
+# the conductor BEFORE the release installs — the namespace must exist to install
+# into, and the egress default-deny must be enforced before any untrusted Pod can
+# start. The chart's objects are the workload that lands inside that locked-down
+# namespace.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.24"

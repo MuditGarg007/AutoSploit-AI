@@ -1,0 +1,45 @@
+{{/*
+The attacker Pod — the harness image. Security-load-bearing (module docstring in
+k8s/manifests.py): `runtimeClassName: gvisor`, `restartPolicy: Never`, and the
+model key delivered via `secretKeyRef` — the Pod spec NAMES the Secret, it never
+carries the key value. The run files mount read-only from the run-config ConfigMap.
+Mirrors k8s/manifests.py:attacker_pod_manifest.
+*/}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: attacker
+  labels:
+    {{- include "engagement.roleLabels" (dict "Values" .Values "role" "attacker") | nindent 4 }}
+spec:
+  runtimeClassName: {{ .Values.runtimeClassName }}
+  restartPolicy: Never
+  containers:
+    - name: attacker
+      image: {{ .Values.attacker.image | quote }}
+      {{- with .Values.attacker.command }}
+      command:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      args:
+        {{- if .Values.attacker.args }}
+        {{- toYaml .Values.attacker.args | nindent 8 }}
+        {{- else }}
+        - run
+        - --config
+        - {{ printf "%s/%s" .Values.attacker.configMountPath .Values.attacker.runConfigBasename | quote }}
+        {{- end }}
+      env:
+        - name: {{ .Values.secret.apiKeyEnv }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secret.name }}
+              key: {{ .Values.secret.apiKeyEnv }}
+      volumeMounts:
+        - name: run-config
+          mountPath: {{ .Values.attacker.configMountPath }}
+          readOnly: true
+  volumes:
+    - name: run-config
+      configMap:
+        name: run-config

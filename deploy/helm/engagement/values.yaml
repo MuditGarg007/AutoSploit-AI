@@ -1,0 +1,56 @@
+# Values for the per-engagement chart (docs/orchestration.md §4, §6). The
+# conductor renders this release with values built from the provision result at
+# run time; the defaults here are only enough for `helm template`/`helm lint` to
+# render a shape the render test can assert.
+#
+# Security-load-bearing invariants (mirrored from k8s/manifests.py, asserted by
+# conductor/tests/test_engagement_chart.py):
+#   - every Pod carries `runtimeClassName: gvisor` and `restartPolicy: Never`
+#   - the model key travels as a `secretKeyRef` (Secret `model-key`), NEVER inlined
+#   - the target Service selects `role=target`
+#   - object names are fixed/unprefixed (`target`, `attacker`, `run-config`) — the
+#     target Service DNS is the scope host (M6a), so it cannot carry a release prefix
+
+# The engagement id — the value of the `engagement` label on every object. Required
+# in a real install; the render default keeps `helm template` runnable standalone.
+engagementId: render
+
+# gVisor RuntimeClass installed by M4 (scripts/m4-bootstrap.sh). Applied to every
+# Pod in this chart. Overridable only so a cluster without gVisor can render/lint;
+# a real engagement always runs under it.
+runtimeClassName: gvisor
+
+# The Secret (name + key) the attacker reads the model key from. The Secret itself
+# is applied imperatively by the conductor before install — this chart only names
+# it in a `secretKeyRef`, so the key value never enters the release or the Pod spec.
+secret:
+  name: model-key
+  # The key within the Secret AND the env var name the harness reads (Seam B).
+  apiKeyEnv: OPENROUTER_API_KEY
+
+# The target: the user's app under test, built in-cluster (M8). Untrusted code —
+# same gVisor jail, no Secret, no config mount (it must never see the model key).
+target:
+  image: ""
+  # The port the attacker dials (the Service `port`).
+  port: 80
+  # The container port behind the Service; defaults to `.target.port` when unset.
+  targetPort: null
+
+# The attacker: the harness image, key from the Secret, run files mounted read-only.
+attacker:
+  image: ""
+  # Override the entrypoint for a stand-in probe image (e.g. the live-proof curl).
+  # Empty command = image default entrypoint.
+  command: []
+  # Empty args = the harness default: `run --config <mountPath>/<runConfigBasename>`.
+  args: []
+  # Where the run-config ConfigMap mounts; run.toml's relative scope_file resolves
+  # next to it exactly as on disk in Phase A (config_gen.py §3.2).
+  configMountPath: /etc/autosploit
+  runConfigBasename: run.toml
+
+# The run-config ConfigMap (`run-config`): basename -> file text (scope.yaml,
+# run.toml). Mounted read-only into the attacker at `attacker.configMountPath`.
+runConfig:
+  files: {}

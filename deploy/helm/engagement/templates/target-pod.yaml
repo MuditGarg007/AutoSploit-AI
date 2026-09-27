@@ -1,0 +1,20 @@
+{{/*
+The target Pod — the user's app under test, built in-cluster (M8). Untrusted code,
+so the same gVisor jail and one-shot lifecycle as every engagement Pod. No Secret,
+no config mount: the target must never see the model key (§2 trust boundary).
+Mirrors k8s/manifests.py:target_pod_manifest.
+*/}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: target
+  labels:
+    {{- include "engagement.roleLabels" (dict "Values" .Values "role" "target") | nindent 4 }}
+spec:
+  runtimeClassName: {{ .Values.runtimeClassName }}
+  restartPolicy: Never
+  containers:
+    - name: target
+      image: {{ .Values.target.image | quote }}
+      ports:
+        - containerPort: {{ .Values.target.targetPort | default .Values.target.port }}

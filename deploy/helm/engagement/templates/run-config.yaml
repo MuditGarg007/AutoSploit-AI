@@ -1,0 +1,22 @@
+{{/*
+The run-config ConfigMap (`run-config`): basename -> file text (scope.yaml,
+run.toml), mounted read-only into the attacker. run.toml's relative scope_file
+resolves next to it exactly as on disk in Phase A (config_gen.py §3.2). Fixed,
+unprefixed name so the attacker volume can reference it by a stable name.
+Mirrors k8s/manifests.py:configmap_manifest.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: run-config
+  labels:
+    {{- include "engagement.labels" . | nindent 4 }}
+{{- with .Values.runConfig.files }}
+data:
+  {{- range $name, $content := . }}
+  {{ $name }}: |
+    {{- $content | nindent 4 }}
+  {{- end }}
+{{- else }}
+data: {}
+{{- end }}
