@@ -49,9 +49,6 @@ class FakeCoreV1:
     def create_namespaced_secret(self, namespace, body):
         self.calls.append(("create_namespaced_secret", {"namespace": namespace, "body": body}))
 
-    def create_namespaced_config_map(self, namespace, body):
-        self.calls.append(("create_namespaced_config_map", {"namespace": namespace, "body": body}))
-
     def create_namespaced_pod(self, namespace, body):
         self.calls.append(("create_namespaced_pod", {"namespace": namespace, "body": body}))
 
@@ -134,27 +131,14 @@ def test_plain_exception_is_not_swallowed():
         EngagementCluster(api, ID).delete_namespace()
 
 
-def test_apply_secret_and_configmap_target_namespace():
+def test_apply_secret_targets_namespace():
     api = FakeCoreV1()
     c = EngagementCluster(api, ID)
     c.apply_secret("sk-or-v1-key")
-    c.apply_configmap({"scope.yaml": "target: {}", "run.toml": "[model]\n"})
 
     sec = next(kw for name, kw in api.calls if name == "create_namespaced_secret")
     assert sec["namespace"] == NS
     assert sec["body"]["stringData"]["OPENROUTER_API_KEY"] == "sk-or-v1-key"
-
-    cm = next(kw for name, kw in api.calls if name == "create_namespaced_config_map")
-    assert cm["body"]["data"]["run.toml"] == "[model]\n"
-
-
-def test_create_attacker_pod_uses_pod_api_in_namespace():
-    api = FakeCoreV1()
-    EngagementCluster(api, ID).create_attacker_pod("ghcr.io/x/harness:abc")
-    pod = next(kw for name, kw in api.calls if name == "create_namespaced_pod")
-    assert pod["namespace"] == NS
-    assert pod["body"]["metadata"]["labels"]["role"] == "attacker"
-    assert pod["body"]["spec"]["containers"][0]["image"] == "ghcr.io/x/harness:abc"
 
 
 def test_apply_network_policy_creates_cilium_crd_in_namespace():
@@ -206,14 +190,6 @@ def test_create_registry_pod_and_service_return_endpoint():
     assert pod["namespace"] == NS
     svc = next(kw for name, kw in api.calls if name == "create_namespaced_service")
     assert svc["body"]["spec"]["ports"][0]["port"] == 5000
-
-
-def test_create_target_service_returns_cluster_dns():
-    api = FakeCoreV1()
-    dns = EngagementCluster(api, ID).create_target_service(port=80, target_port=3000)
-    assert dns == "target.engagement-eng1.svc.cluster.local"
-    svc = next(kw for name, kw in api.calls if name == "create_namespaced_service")
-    assert svc["body"]["spec"]["ports"][0]["targetPort"] == 3000
 
 
 def test_pod_phase_reads_dict_status():

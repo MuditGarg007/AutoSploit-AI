@@ -41,9 +41,6 @@ class FakeCoreV1:
     def create_namespaced_secret(self, namespace, body):
         self.calls.append("create_namespaced_secret")
 
-    def create_namespaced_config_map(self, namespace, body):
-        self.calls.append("create_namespaced_config_map")
-
     def create_namespaced_pod(self, namespace, body):
         self.calls.append(f"create_pod:{body['metadata']['name']}")
 
@@ -118,7 +115,6 @@ def test_full_engagement_installs_chart_and_tears_down(tmp_path):
     assert "create_pod:target" not in api.calls
     assert "create_pod:attacker" not in api.calls
     assert "create_namespaced_service" not in api.calls
-    assert "create_namespaced_config_map" not in api.calls
 
     # The release install carried the right name/namespace and values built from
     # the provision result. The Secret is applied before install (never in values).

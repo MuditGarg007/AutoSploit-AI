@@ -60,7 +60,6 @@ class CoreV1(Protocol):
     def create_namespace(self, body: Any) -> Any: ...
     def delete_namespace(self, name: str) -> Any: ...
     def create_namespaced_secret(self, namespace: str, body: Any) -> Any: ...
-    def create_namespaced_config_map(self, namespace: str, body: Any) -> Any: ...
     def create_namespaced_pod(self, namespace: str, body: Any) -> Any: ...
     def create_namespaced_service(self, namespace: str, body: Any) -> Any: ...
     def read_namespaced_pod(self, name: str, namespace: str) -> Any: ...
@@ -148,37 +147,6 @@ class EngagementCluster:
             body=m.secret_manifest(self.engagement_id, api_key),
         )
 
-    def apply_configmap(self, files: Mapping[str, str]) -> None:
-        """Create the run-config ConfigMap (scope.yaml + run.toml) for the attacker."""
-        self._api.create_namespaced_config_map(
-            namespace=self.namespace,
-            body=m.configmap_manifest(self.engagement_id, files),
-        )
-
-    def create_attacker_pod(
-        self,
-        image: str,
-        *,
-        run_config_basename: str = "run.toml",
-        command: list[str] | None = None,
-        args: list[str] | None = None,
-    ) -> None:
-        """Launch the attacker Pod (harness image, key by Secret ref, config mounted).
-
-        `command`/`args` override the entrypoint (default: the harness CLI) — used
-        by the live exit-gate test to run a stand-in attacker through this path.
-        """
-        self._api.create_namespaced_pod(
-            namespace=self.namespace,
-            body=m.attacker_pod_manifest(
-                self.engagement_id,
-                image,
-                run_config_basename=run_config_basename,
-                command=command,
-                args=args,
-            ),
-        )
-
     # --- target-side objects (untrusted: never see the key) ------------------
 
     def create_registry_pod(self) -> None:
@@ -227,25 +195,6 @@ class EngagementCluster:
                 context_configmap=context_configmap,
             ),
         )
-
-    def create_target_pod(self, image: str, *, container_port: int) -> None:
-        """Deploy the target Pod built from the user repo (gVisor, no key)."""
-        self._api.create_namespaced_pod(
-            namespace=self.namespace,
-            body=m.target_pod_manifest(
-                self.engagement_id, image, container_port=container_port
-            ),
-        )
-
-    def create_target_service(self, *, port: int, target_port: int | None = None) -> str:
-        """Expose the target via a Service and return its cluster DNS (the scope host)."""
-        self._api.create_namespaced_service(
-            namespace=self.namespace,
-            body=m.target_service_manifest(
-                self.engagement_id, port=port, target_port=target_port
-            ),
-        )
-        return m.target_service_dns(self.engagement_id)
 
     # --- reads (for the watcher, step 3) -------------------------------------
 
