@@ -1,8 +1,10 @@
 # Isolation Hardening — Roadmap (Step 3)
 
-> **Status: in progress (updated 2026-09-24).** Done: M4, M6. M7 enforcement proven
-> live on kind (its two internet-dependent SEAM-1 assertions ride the H3 online run).
-> Open: M5, M6a, M8, M9, H3. Execution roadmap for build-order step 3
+> **Status: in progress (updated 2026-09-27).** Done: M4, M6, M7, M8. M7 enforcement
+> proven live on kind (its two internet-dependent SEAM-1 assertions ride the H3 online
+> run); M8 Kaniko in-cluster build proven live on kind (its external clone/base
+> ingestion is deferred to M5 — see the M8 section).
+> Open: M5, M6a, M9, H3. Execution roadmap for build-order step 3
 > (`overview.md §6`): move engagement execution off plain local Docker onto a
 > hardened Kubernetes substrate so untrusted user repos run safely isolated. This is
 > **provisioner + conductor Phase B** (`orchestration.md §9`). It is a tracking and
