@@ -31,8 +31,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Protocol
 
 from autosploit_conductor.context import EngagementContext, make_context
+from autosploit_conductor.k8s import helm as _helm
 from autosploit_conductor.k8s.client import CoreV1, CustomObjects, EngagementCluster
 from autosploit_conductor.k8s.watch import map_pod_result, watch_pod
 from autosploit_conductor.launch import _redact
@@ -41,6 +43,27 @@ from autosploit_conductor.result import RunResult
 
 _API_KEY_ENV = "OPENROUTER_API_KEY"
 _ATTACKER_POD = "attacker"
+
+# Fixed Helm release name. The namespace is per-engagement (one release per
+# namespace), so a stable, RFC1123-valid name is unambiguous — unlike the raw
+# engagement id, which uses the wider docker-label charset.
+_RELEASE_NAME = "engagement"
+
+# The per-engagement chart (M9 Phase 1). run.py lives at
+# conductor/src/autosploit_conductor/k8s/run.py, so the repo root is four parents up.
+# The CLI resolves the effective dir (env override); this default keeps `run_k8s`
+# usable directly in tests and scripts.
+_DEFAULT_CHART_DIR = Path(__file__).resolve().parents[4] / "deploy" / "helm" / "engagement"
+
+
+class HelmRunner(Protocol):
+    """The helm seam `run_k8s` drives (k8s/helm.py in production, a fake in tests)."""
+
+    def install_release(
+        self, release: str, chart_dir: Path, namespace: str, values: Mapping[str, Any]
+    ) -> None: ...
+
+    def uninstall_release(self, release: str, namespace: str) -> None: ...
 
 # Placeholder harness image ref. Overridable per call; the real digest-pinned ref
 # lands with the harness image pipeline (roadmap M5) and the engagement Helm chart
@@ -81,6 +104,8 @@ def run_k8s(
     out_dir: Path | str = ".",
     api_key: str | None = None,
     attacker_image: str = _DEFAULT_ATTACKER_IMAGE,
+    helm: HelmRunner = _helm,
+    chart_dir: Path = _DEFAULT_CHART_DIR,
     timeout_s: float | None = None,
     poll_interval_s: float = 2.0,
     env: Mapping[str, str] | None = None,
@@ -135,13 +160,15 @@ def run_k8s(
                     prov,
                     attacker_image=attacker_image,
                     api_key=api_key,
+                    helm=helm,
+                    chart_dir=chart_dir,
                     timeout_s=timeout_s if timeout_s is not None else ctx.timeout_s,
                     poll_interval_s=poll_interval_s,
                     now=now,
                     sleep=sleep,
                 )
     finally:
-        _teardown(cluster)
+        _teardown(cluster, helm)
         record_path = _write_record(ctx, provision_outcome, result, started_at)
 
     return result if result is not None else _internal_failure(), record_path
@@ -154,25 +181,27 @@ def _run_engagement(
     *,
     attacker_image: str,
     api_key: str,
+    helm: HelmRunner,
+    chart_dir: Path,
     timeout_s: float,
     poll_interval_s: float,
     now: Callable[[], float],
     sleep: Callable[[float], None],
 ) -> RunResult:
-    """Deploy the target, launch the attacker, watch it, collect its logs."""
-    # Target side (untrusted): Pod + Service. The Service DNS is the scope host
-    # the provisioner emitted into scope.yaml (M6a / contract 1.1.0).
-    cluster.create_target_pod(prov.target_image, container_port=prov.target_port)
-    cluster.create_target_service(
-        port=prov.service_port if prov.service_port is not None else prov.target_port,
-        target_port=prov.target_port,
-    )
+    """Install the engagement release, watch the attacker, collect its logs.
 
-    # Attacker side (trusted): Secret with the key, ConfigMap with the run files,
-    # then the Pod that references both.
+    The whole workload — target Pod + Service, attacker Pod, run-config ConfigMap —
+    is one Helm release rendered from the per-engagement chart (M9). Only the model
+    key stays imperative: the Secret is applied here so its value never enters the
+    chart values file; the chart names it in a `secretKeyRef` only.
+    """
     cluster.apply_secret(api_key)
-    cluster.apply_configmap(prov.config_files)
-    cluster.create_attacker_pod(attacker_image)
+    helm.install_release(
+        _RELEASE_NAME,
+        chart_dir,
+        cluster.namespace,
+        _chart_values(cluster.engagement_id, prov, attacker_image),
+    )
 
     outcome = watch_pod(
         cluster,
@@ -203,8 +232,42 @@ def _collect_logs(cluster: EngagementCluster, ctx: EngagementContext, api_key: s
         print(f"conductor: could not write attacker logs: {exc}", file=sys.stderr, flush=True)
 
 
-def _teardown(cluster: EngagementCluster) -> None:
-    """Delete the namespace — full teardown. Never masks the primary result (§8)."""
+def _chart_values(
+    engagement_id: str, prov: K8sProvision, attacker_image: str
+) -> dict[str, Any]:
+    """Build the Helm values for one engagement from the provision result.
+
+    `target.port` is the Service port the attacker dials (the scope port);
+    `target.targetPort` is the container port behind it. The model key is NOT here —
+    it rides the imperatively-applied Secret the chart references. Secret name/key,
+    mount path and run-config basename take the chart defaults (they mirror the
+    `k8s/manifests.py` constants).
+    """
+    service_port = prov.service_port if prov.service_port is not None else prov.target_port
+    return {
+        "engagementId": engagement_id,
+        "target": {
+            "image": prov.target_image,
+            "port": service_port,
+            "targetPort": prov.target_port,
+        },
+        "attacker": {"image": attacker_image},
+        "runConfig": {"files": dict(prov.config_files)},
+    }
+
+
+def _teardown(cluster: EngagementCluster, helm: HelmRunner) -> None:
+    """Uninstall the release, then delete the namespace — full teardown.
+
+    Both steps are best-effort and never mask the primary result (§8). The
+    namespace delete alone wipes the workload; the `helm uninstall` keeps Helm's
+    own release bookkeeping clean (and is a no-op the caller swallows if the
+    release was never installed — e.g. a failed provision).
+    """
+    try:
+        helm.uninstall_release(_RELEASE_NAME, cluster.namespace)
+    except Exception as exc:  # noqa: BLE001 — teardown must not mask the result
+        print(f"conductor: helm uninstall failed: {exc}", file=sys.stderr, flush=True)
     try:
         cluster.delete_namespace()
     except Exception as exc:  # noqa: BLE001 — teardown must not mask the result

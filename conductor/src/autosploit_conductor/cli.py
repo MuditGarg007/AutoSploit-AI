@@ -57,11 +57,13 @@ def _run_k8s(args: argparse.Namespace) -> tuple[object, Path | None]:
     operator-supplied target port bound in.
     """
     import functools
+    import os
 
     from autosploit_conductor.context import ContextError
+    from autosploit_conductor.k8s import helm
     from autosploit_conductor.k8s.factory import build_core_v1, build_custom_objects
     from autosploit_conductor.k8s.provision import phaseb_provision
-    from autosploit_conductor.k8s.run import run_k8s
+    from autosploit_conductor.k8s.run import _DEFAULT_CHART_DIR, run_k8s
 
     if args.target_port is None:
         raise ContextError("--k8s requires --target-port (the port the target listens on)")
@@ -69,6 +71,11 @@ def _run_k8s(args: argparse.Namespace) -> tuple[object, Path | None]:
     api = build_core_v1()
     custom = build_custom_objects()
     provision = functools.partial(phaseb_provision, target_port=args.target_port)
+    # The engagement workload is a Helm release rendered from the per-engagement
+    # chart (M9). Default to the in-repo chart; AUTOSPLOIT_ENGAGEMENT_CHART overrides
+    # it (e.g. a chart baked into the conductor image at a different path).
+    chart_override = os.environ.get("AUTOSPLOIT_ENGAGEMENT_CHART")
+    chart_dir = Path(chart_override) if chart_override else _DEFAULT_CHART_DIR
     return run_k8s(
         args.repo,
         api,
@@ -76,6 +83,8 @@ def _run_k8s(args: argparse.Namespace) -> tuple[object, Path | None]:
         custom=custom,
         engagement_id=args.engagement_id,
         out_dir=args.out,
+        helm=helm,
+        chart_dir=chart_dir,
         timeout_s=args.timeout_s,
     )
 
