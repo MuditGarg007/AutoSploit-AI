@@ -135,6 +135,26 @@ def test_full_engagement_installs_chart_and_tears_down(tmp_path):
     assert api.namespaces == set()
 
 
+def test_attacker_image_flows_to_chart_values(tmp_path):
+    # A digest-pinned harness ref passed to run_k8s reaches the chart's attacker.image.
+    api = FakeCoreV1(phase="Succeeded", exit_code=0)
+    helm = FakeHelm()
+    digest = "ghcr.io/autosploit/harness@sha256:" + "b" * 64
+    run_k8s(
+        REPO,
+        api,
+        provision=_provision(),
+        engagement_id="e1",
+        out_dir=tmp_path,
+        api_key=KEY,
+        helm=helm,
+        sleep=_no_sleep,
+        attacker_image=digest,
+    )
+    _release, _chart, _namespace, values = helm.installs[0]
+    assert values["attacker"]["image"] == digest
+
+
 def test_service_port_override_maps_to_target_values(tmp_path):
     api = FakeCoreV1()
     helm = FakeHelm()

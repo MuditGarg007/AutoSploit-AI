@@ -59,3 +59,45 @@ def test_cli_k8s_requires_target_port(capsys):
 
 def test_target_port_flag_parses():
     assert _parse_args(["run", "repo", "--k8s", "--target-port", "3000"]).target_port == 3000
+
+
+class _Result:
+    report_path = None
+    status = "complete"
+
+
+def _stub_run_k8s_capture(monkeypatch):
+    """Patch the seams `_run_k8s` reaches so main() runs without a cluster, and
+    return a dict that captures the kwargs passed to run_k8s."""
+    from autosploit_conductor.k8s import factory, run
+
+    captured: dict = {}
+
+    def fake_run_k8s(*args, **kwargs):
+        captured.update(kwargs)
+        return _Result(), None
+
+    monkeypatch.setattr(factory, "build_core_v1", lambda: object())
+    monkeypatch.setattr(factory, "build_custom_objects", lambda: object())
+    monkeypatch.setattr(run, "run_k8s", fake_run_k8s)
+    return captured
+
+
+def test_cli_k8s_reads_harness_image_env(monkeypatch):
+    # AUTOSPLOIT_HARNESS_IMAGE, when set, flows into run_k8s as attacker_image.
+    captured = _stub_run_k8s_capture(monkeypatch)
+    digest = "ghcr.io/autosploit/harness@sha256:" + "a" * 64
+    monkeypatch.setenv("AUTOSPLOIT_HARNESS_IMAGE", digest)
+    rc = main(["run", "some-repo", "--k8s", "--target-port", "8080"])
+    assert rc == 0
+    assert captured["attacker_image"] == digest
+
+
+def test_cli_k8s_defaults_harness_image(monkeypatch):
+    # Unset AUTOSPLOIT_HARNESS_IMAGE: the CLI passes no attacker_image, so run_k8s
+    # keeps its own placeholder default (never masquerades as a real digest ref).
+    captured = _stub_run_k8s_capture(monkeypatch)
+    monkeypatch.delenv("AUTOSPLOIT_HARNESS_IMAGE", raising=False)
+    rc = main(["run", "some-repo", "--k8s", "--target-port", "8080"])
+    assert rc == 0
+    assert "attacker_image" not in captured

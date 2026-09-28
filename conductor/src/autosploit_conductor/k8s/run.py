@@ -65,9 +65,9 @@ class HelmRunner(Protocol):
 
     def uninstall_release(self, release: str, namespace: str) -> None: ...
 
-# Placeholder harness image ref. Overridable per call; the real digest-pinned ref
-# lands with the harness image pipeline (roadmap M5) and the engagement Helm chart
-# (M9). Kept obvious so an unset image can't masquerade as a real one.
+# Placeholder harness image ref. Overridable per call; the CLI supplies the real
+# digest-pinned ref from the M5 release pipeline via AUTOSPLOIT_HARNESS_IMAGE
+# (cli.py:_run_k8s). Kept obvious so an unset image can't masquerade as a real one.
 _DEFAULT_ATTACKER_IMAGE = "ghcr.io/autosploit/harness:dev"
 
 

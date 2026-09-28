@@ -76,6 +76,12 @@ def _run_k8s(args: argparse.Namespace) -> tuple[object, Path | None]:
     # it (e.g. a chart baked into the conductor image at a different path).
     chart_override = os.environ.get("AUTOSPLOIT_ENGAGEMENT_CHART")
     chart_dir = Path(chart_override) if chart_override else _DEFAULT_CHART_DIR
+    # The attacker harness image is a digest-pinned ref pushed by the M5 release
+    # pipeline; AUTOSPLOIT_HARNESS_IMAGE carries it (e.g.
+    # ghcr.io/<owner>/harness@sha256:…), symmetric with AUTOSPLOIT_ENGAGEMENT_CHART.
+    # Unset falls back to run_k8s's obvious placeholder default.
+    harness_image = os.environ.get("AUTOSPLOIT_HARNESS_IMAGE")
+    image_kwargs = {"attacker_image": harness_image} if harness_image else {}
     return run_k8s(
         args.repo,
         api,
@@ -86,6 +92,7 @@ def _run_k8s(args: argparse.Namespace) -> tuple[object, Path | None]:
         helm=helm,
         chart_dir=chart_dir,
         timeout_s=args.timeout_s,
+        **image_kwargs,
     )
 
 
