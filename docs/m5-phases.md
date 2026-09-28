@@ -178,12 +178,19 @@ the registry mirror. The denied `git://` external-context branch is removed.
 **Goal:** the conductor runs in a hardened image carrying `git` and `crane`.
 
 **Changes**
-- `conductor/Dockerfile` (new) — multi-stage, non-root where possible, no secrets baked;
-  `git` and `crane` present at runtime.
+- `conductor/Dockerfile` (new) — multi-stage, non-root, no secrets baked; `git` and
+  `crane` present at runtime.
+- `.dockerignore` (new, repo root) — the conductor build context is the **repo root**,
+  not `./conductor`: conductor's `[tool.uv.sources]` path deps (conductor → provisioner
+  → harness) live in sibling dirs outside a `./conductor` context, so `uv sync` needs
+  them present. The root ignore strips `.env` (secrets), `.venv`, and other local state
+  from that context.
 
 **Verify**
-- `docker build -t conductor:proof ./conductor`
+- `docker build -f conductor/Dockerfile -t conductor:proof .`
 - `docker run --rm conductor:proof git --version && docker run --rm --entrypoint crane conductor:proof version`
+- Non-root: `docker run --rm --entrypoint id conductor:proof` → `uid=999(autosploit)`.
+- Leak scan (value shape `sk-or-…`, as Phase 1): `docker run --rm --entrypoint sh conductor:proof -c 'grep -rIsE "sk-or-[A-Za-z0-9-]{8,}" / | grep -v "^Binary" || true'` → empty.
 
 **Commit:** `M5: hardened conductor image with git + crane for the mirror path`
 

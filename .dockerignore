@@ -1,0 +1,23 @@
+# Repo-root build context for conductor/Dockerfile (it needs the sibling packages
+# harness/ + provisioner/, so its context is the repo root — see that Dockerfile's
+# header). Keep the context (and image) free of local state and — load-bearing — of
+# secrets: any package's .env holds OPENROUTER_API_KEY on a dev box and must never
+# enter the image. Only the paths the Dockerfile COPYs (pyproject/uv.lock/README/src)
+# survive; everything below is stripped.
+**/.env
+**/.venv
+**/.python-version
+**/.pytest_cache
+**/.ruff_cache
+**/__pycache__
+**/*.pyc
+**/node_modules
+**/dist
+conductor/runs
+# Docs, CI, git, and other trees the image never needs.
+.git
+.github
+docs
+deploy
+scripts
+k8s
