@@ -1,12 +1,16 @@
 # Isolation Hardening — Roadmap (Step 3)
 
-> **Status: in progress (updated 2026-09-28).** Done: M4, M6, M7, M8, M9. M7 enforcement
-> proven live on kind (its two internet-dependent SEAM-1 assertions ride the H3 online
-> run); M8 Kaniko in-cluster build proven live on kind (its external clone/base
-> ingestion is deferred to M5 — see the M8 section); M9 engagement Helm chart proven
-> live on kind (`scripts/m9-proof.sh`), with the namespace/netpol/secret kept imperative
-> and fail-closed ahead of the release — see the M9 section.
-> Open: M5, M6a, H3. Execution roadmap for build-order step 3
+> **Status: in progress (updated 2026-09-28).** Done: M4, M5, M6, M7, M8, M9. M7
+> enforcement proven live on kind (its two internet-dependent SEAM-1 assertions ride
+> the H3 online run); M8 Kaniko in-cluster build proven live on kind; M5 closed its
+> external clone/base ingestion — the conductor now clones repo-side and mirrors bases
+> into the per-engagement registry, proven live under real egress (`scripts/m5-proof.sh`),
+> which also unstubs the M8 provision seam (`k8s/provision.py` is now real, not the M6
+> placeholder); M9 engagement Helm chart proven live on kind (`scripts/m9-proof.sh`),
+> with the namespace/netpol/secret kept imperative and fail-closed ahead of the release
+> — see the M9 section.
+> Open: H3 (M6a is now DONE — `CONTRACT_VERSION` bumped to 1.1.0). Execution roadmap
+> for build-order step 3
 > (`overview.md §6`): move engagement execution off plain local Docker onto a
 > hardened Kubernetes substrate so untrusted user repos run safely isolated. This is
 > **provisioner + conductor Phase B** (`orchestration.md §9`). It is a tracking and
@@ -83,17 +87,27 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
   this same kind cluster end to end. (Substrate note: on this kernel kind needs
   Cilium >= 1.21.0-pre.2 — see the M4 bootstrap.)
 
-### M5 — Harness image + CI to registry — NOT DONE
+### M5 — Harness image + in-cluster repo/base mirror — DONE (live on kind 2026-09-28)
 
-- **Work:** confirm/extend the existing GHCR build-scan-push so the **harness image**
-  (attacker) is built, scanned, and pushed, and is pullable by the cluster.
-- **Exit:** the cluster pulls the harness image by digest from GHCR.
-- **Depends on:** M4. Largely already present in `release.yml`; verify coverage.
-- **Status — NOT done.** `.github/workflows/release.yml` builds, scans, and pushes
-  the **control-plane** image only; there is no harness `Dockerfile` and no harness
-  build/scan/push/digest-pull anywhere in the tree. M6 runs against a stand-in
-  attacker image (curl) precisely because the real harness image is still M5's
-  scope. This is one of the milestones still open off M6.
+- **Work:** the harness (attacker) image is built and digest-pinned into the
+  engagement (`AUTOSPLOIT_HARNESS_IMAGE`, commit `d123fc0`), and — the part that
+  grew past the original scope — the **in-cluster repo/base mirror** that lets a
+  Kaniko build run under the M7 default-deny egress: the conductor (which *does*
+  have egress) clones the user repo conductor-side and preloads each external `FROM`
+  base into the per-engagement registry, so the air-gapped build Pod reaches neither
+  an external git host nor a base-image registry.
+- **Exit:** a real repo builds through the mirror path under live egress — harness
+  pulled by digest, bases mirrored, Kaniko builds and pushes, target runs.
+- **Depends on:** M4, M6, M8 (registry path).
+- **Status — DONE.** Built as `conductor/src/autosploit_conductor/k8s/mirror.py`
+  (base preload + Kaniko `--registry-mirror` args) and a rewritten `k8s/provision.py`
+  that now does the real clone → mirror → `dir://` build-context ConfigMap → Kaniko
+  build → deploy — this **unstubs the M6/M8 provision seam** (it was a
+  `failed(provision)` placeholder). The conductor image is hardened with `git` +
+  `crane` for the mirror path (`conductor/Dockerfile`, commit `fab666c`). **Proven
+  live** by `scripts/m5-proof.sh` (2026-09-28, commit `be4aad3`): harness digest-pull
+  + mirror build under real egress. This closes the M8 "external clone/base
+  ingestion" open item.
 
 ### M6 — Conductor as a Kubernetes controller — DONE 2026-09-24
 
@@ -117,11 +131,11 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
   Stand-in images (nginx/curl) are legitimate placeholders for what the *other*
   milestones supply — the real harness image is **M5**, the in-cluster Kaniko
   target build is **M8** — so what is closed here is exactly M6's own scope: the
-  conductor's controller loop on real infra. The M8 provision seam is stubbed
-  (`k8s/provision.py`), so `--k8s` today stands the namespace up, records a clean
-  `failed(provision)`, and tears down until M8 lands.
+  conductor's controller loop on real infra. (Historical note: M6 shipped the
+  provision seam `k8s/provision.py` as a `failed(provision)` placeholder; it was made
+  real by M8 and completed by M5 — it now clones, mirrors, Kaniko-builds, and deploys.)
 
-### M6a — Scope contract bump to 1.1.0
+### M6a — Scope contract bump to 1.1.0 — DONE 2026-09-28
 
 - **Work:** the scope `host` field carries the target **Service DNS name** instead of
   `127.0.0.1`. Same shape, wider value domain — an additive **MINOR** change
@@ -131,12 +145,25 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
 - **Exit:** provisioner emits a Service-DNS scope that round-trips through
   `load_scope`; harness attacks the target over cluster DNS, not loopback.
 - **Depends on:** M6 (rides with the conductor/provisioner cutover).
-- **Status — conductor side ready, blocked on the provisioner.** The conductor
-  already treats the target as a Service (it deploys the Service and exposes its
-  cluster DNS, `k8s/client.create_target_service`), so the consumer end of the
-  contract is in place. The remaining work — the provisioner *emitting* a
-  Service-DNS `host` into scope.yaml and moving `CONTRACT_VERSION` to `1.1.0` — is
-  provisioner-side and lands with the M8 in-cluster build. Tracked, not yet done.
+- **Status — DONE 2026-09-28.** The data-plane landed with M5; the deliberate
+  `CONTRACT_VERSION` `1.0.0` → `1.1.0` MINOR bump (the "now emitting Service DNS"
+  signal) is now made (`harness/contracts/version.py:18`) and the golden contract
+  descriptor regenerated via `autosploit-harness contract`
+  (`harness/contracts/contract.schema.json`, now `1.1.0`). The regen also
+  normalized the committed golden from CRLF to the generator's LF, which had left
+  the drift guard `test_committed_contract_matches_live_shapes` red on a clean
+  Linux checkout; the full contract suite (15) and harness suite (65) are now green.
+  The emit moved into the conductor's in-cluster Phase-B provisioner
+  (`k8s/provision.py`), not the old `autosploit_provisioner` — `_emit_config` now
+  writes `scope.yaml` with `host: target_service_dns(<id>)` (provision.py:130, 299),
+  the Service DNS, not `127.0.0.1`. That payload **round-trips through the harness
+  `load_scope`** unchanged: `load_scope` parses `target:{host,ports}`
+  (`harness/driver/config.py:36`), which is exactly the emitted shape (the scope
+  format is a frozen seam, so only the value domain widened). So the exit criterion —
+  Service-DNS scope round-trips, harness attacks over cluster DNS not loopback — is
+  met, and the `CONTRACT_VERSION` bump (`harness/contracts/version.py:18` → `1.1.0`)
+  that signals "now emitting Service DNS" has been made and the golden regenerated —
+  so this milestone is DONE.
 
 ### M7 — NetworkPolicy: the egress matrix, enforced — enforcement proven live; external edges ride H3
 
@@ -203,12 +230,11 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
   the node does **not** use coredns (so `registry.<ns>.svc` won't resolve there) and
   the registry is HTTP-only — solved by containerd `config_path` + a per-engagement
   `certs.d` `hosts.toml` mapping the registry name → `http://<ClusterIP>:5000`.
-- **Open (egress ingestion, → M5):** under the M7 default-deny egress the build Pod
-  can reach **no external git host or base-image registry**, so an external
-  `git clone` / `FROM` base pull is denied by design. The proof therefore feeds the
-  build context from an in-cluster ConfigMap (`dir://`) and isolates the M8 machinery
-  from that egress interaction. Closing it needs the M5 in-cluster repo/base mirror;
-  tracked in `docs/deferred-open-items.md`.
+- **Egress ingestion — CLOSED by M5 (2026-09-28).** Under the M7 default-deny egress
+  the build Pod can reach no external git host or base-image registry. M5 closed this:
+  the conductor clones the repo conductor-side and mirrors external `FROM` bases into
+  the per-engagement registry (`k8s/mirror.py`), so the build Pod stays air-gapped.
+  Proven live under real egress by `scripts/m5-proof.sh`. See the M5 section.
 
 ### M9 — Engagement Helm chart — DONE (live on kind 2026-09-28)
 
@@ -258,7 +284,7 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
 
 ```
 M4 (cluster + Cilium + gVisor)
- ├─ M5 (harness image → GHCR)
+ ├─ M5 (harness image + in-cluster repo/base mirror)
  └─ M6 (conductor as k8s controller) ── M6a (scope 1.1.0)
       ├─ M7 (NetworkPolicy / egress matrix)
       ├─ M8 (Kaniko target build)
@@ -310,12 +336,13 @@ them distinct in code and review.
 
 ## 7. First move
 
-**M4 and M6 are done** (see their milestones). Three milestones are now unblocked off
-M6 and can run in parallel — **M7** (NetworkPolicy egress matrix, the SEAM-1
-enforcement point; no provisioner dependency), **M8** (Kaniko in-cluster target
-build, which also unstubs the M6 provision seam and carries the M6a `1.1.0` contract
-bump), and **M5** (harness image → GHCR). Recommended next: **M7** — cleanest scope,
-`hardening.spec.ts` + the kind red-team pass already exist to test it against.
+**M4–M9 and M6a are all done** (see their milestones). One item remains before H3
+closes step 3:
+
+1. **H3 — the exit gate.** Stand up the `deploy/terraform` GKE cluster and run
+   `scripts/redteam.sh` green against the real NetworkPolicy. This is the critical
+   remaining work and absorbs the three M7 SEAM-1 assertions deferred for want of an
+   online cluster. **This closes step 3.**
 
 > Original first move (M4), now complete: local kind cluster + Cilium CNI + gVisor
 > `RuntimeClass`, then cut the conductor over from subprocess to the `kubernetes`

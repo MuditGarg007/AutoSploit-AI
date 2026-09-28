@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "driver": {
     "run": "run(config_path: 'Path') -> 'Report'",
     "run_engagement": "run_engagement(*, model, scope: 'ScopeAllowlist', budget: 'BudgetState', emitter: 'JsonlEmitter', ledger: 'Ledger', objective: 'str' = 'Begin the engagement. Recon the target in scope, identify vulnerabilities, and exploit what you can. Report what you find.') -> 'tuple[Report, dict]'"
