@@ -1,28 +1,35 @@
-"""Tests for the M8 Phase B provisioner (Kaniko in-cluster target build).
+"""Tests for the Phase B provisioner (Kaniko in-cluster build + M5 repo/base mirror).
 
-A fake cluster scripts the registry/build Pod phases so the whole provision flow —
-registry up, Kaniko build, scope emit — is proven with no real cluster and no
-waiting. The security-load-bearing shape (build pushes to the in-cluster registry,
-image ref is the registry ref, scope points at the target Service DNS) is asserted
-here; the manifest-level invariants live in test_k8s_manifests.
+A fake cluster scripts the registry/build Pod phases, and injected fake clone/mirror
+seams stand in for `resolve_source`/`crane copy`, so the whole provision flow — registry
+up, conductor-side clone, base-image mirror, `dir://` context ConfigMap, Kaniko build,
+scope emit — is proven with no real cluster, no git, no crane, and no waiting. The
+security-load-bearing shape (build fetches its context in-cluster, bases resolve against
+the mirror, nothing needs egress, image ref is the registry ref, scope points at the
+target Service DNS) is asserted here; the manifest-level invariants live in
+test_k8s_manifests.
 """
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import pytest
+from autosploit_provisioner.contracts.plan import Source
 
 from autosploit_conductor.context import EngagementContext
 from autosploit_conductor.k8s import manifests as m
 from autosploit_conductor.k8s.provision import (
     ProvisionError,
-    _kaniko_context,
+    _external_bases,
+    _mirror_dst,
     phaseb_provision,
 )
 
 ID = "eng1"
 REPO = "github.com/acme/vuln-app"
+_DOCKERFILE = "FROM busybox:1.36\nCOPY app.py /\n"
 
 
 def _ctx() -> EngagementContext:
@@ -41,6 +48,7 @@ class FakeCluster:
         self._i: dict[str, int] = {}
         self._build_exit = build_exit
         self.calls: list = []
+        self.context_files: dict[str, str] | None = None
 
     def create_registry_pod(self) -> None:
         self.calls.append("registry_pod")
@@ -49,8 +57,23 @@ class FakeCluster:
         self.calls.append("registry_service")
         return m.registry_endpoint(ID)
 
-    def create_build_pod(self, *, context, destination, dockerfile=m.DEFAULT_DOCKERFILE):
-        self.calls.append(("build_pod", context, destination, dockerfile))
+    def create_build_context_configmap(self, files, *, name=m.BUILD_CONTEXT_CONFIGMAP):
+        self.calls.append(("build_context", dict(files)))
+        self.context_files = dict(files)
+        return name
+
+    def create_build_pod(
+        self,
+        *,
+        context,
+        destination,
+        dockerfile=m.DEFAULT_DOCKERFILE,
+        context_configmap=None,
+        registry_mirror=None,
+    ):
+        self.calls.append(
+            ("build_pod", context, destination, dockerfile, context_configmap, registry_mirror)
+        )
 
     def pod_phase(self, name: str):
         seq = self._phases.get(name, ["Running"])
@@ -62,27 +85,87 @@ class FakeCluster:
         return self._build_exit
 
 
-def _run(cluster, **kw):
+def _fake_clone(dockerfile: str = _DOCKERFILE, *, extra: dict[str, str] | None = None):
+    """A resolve_fn that writes a repo into the workdir and records the ref it got."""
+    seen: dict[str, str] = {}
+
+    def resolve(ref: str, workdir: Path) -> Source:
+        seen["ref"] = ref
+        workdir.mkdir(parents=True, exist_ok=True)
+        (workdir / "Dockerfile").write_text(dockerfile)
+        (workdir / "app.py").write_text("print('hi')\n")
+        for rel, content in (extra or {}).items():
+            p = workdir / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        return Source(kind="git", path=workdir, image_ref=None, commit="deadbeef")
+
+    resolve.seen = seen  # type: ignore[attr-defined]
+    return resolve
+
+
+def _mirror_recorder():
+    calls: list[tuple[str, str]] = []
+
+    def mirror(src: str, dst: str) -> None:
+        calls.append((src, dst))
+
+    mirror.calls = calls  # type: ignore[attr-defined]
+    return mirror
+
+
+def _run(cluster, *, resolve_fn=None, mirror_fn=None, **kw):
     kw.setdefault("target_port", 8080)
     return phaseb_provision(
-        REPO, _ctx(), cluster, now=lambda: 0.0, sleep=lambda s: None, **kw
+        REPO,
+        _ctx(),
+        cluster,
+        now=lambda: 0.0,
+        sleep=lambda s: None,
+        resolve_fn=resolve_fn or _fake_clone(),
+        mirror_fn=mirror_fn or _mirror_recorder(),
+        **kw,
     )
 
 
-def test_happy_path_builds_and_returns_registry_image():
+def test_happy_path_clones_mirrors_and_builds_via_dir_context():
     cluster = FakeCluster({"registry": ["Running"], "build": ["Succeeded"]})
-    prov = _run(cluster)
+    resolve_fn = _fake_clone()
+    mirror_fn = _mirror_recorder()
+    prov = _run(cluster, resolve_fn=resolve_fn, mirror_fn=mirror_fn)
 
-    # Registry stood up before the build pushed to it.
-    assert cluster.calls[0] == "registry_pod"
-    assert cluster.calls[1] == "registry_service"
-    kind, context, destination, dockerfile = cluster.calls[2]
-    assert kind == "build_pod"
-    # Kaniko pushes to, and the target runs from, the in-cluster registry ref.
+    # Flow: registry up → context ConfigMap packed → build Pod. (Clone + mirror happen
+    # conductor-side, off the cluster; asserted via the recorders below.)
+    assert [c if isinstance(c, str) else c[0] for c in cluster.calls] == [
+        "registry_pod",
+        "registry_service",
+        "build_context",
+        "build_pod",
+    ]
+
+    # The conductor cloned an https remote (bare ref would misread as an image ref).
+    assert resolve_fn.seen["ref"] == f"https://{REPO}"
+
+    # The external base was preloaded into the in-cluster mirror at the path the
+    # `--registry-mirror` will look for it.
+    mirror = m.registry_mirror_endpoint(ID)
+    assert mirror_fn.calls == [("busybox:1.36", f"{mirror}/library/busybox:1.36")]
+
+    # The packed context holds the repo files (Dockerfile + source), no `.git`.
+    assert cluster.context_files is not None
+    assert cluster.context_files["Dockerfile"] == _DOCKERFILE
+    assert "app.py" in cluster.context_files
+
+    # The build Pod uses a `dir://` context from that ConfigMap + the mirror — never
+    # a `git://` external context (which the live egress would deny).
+    (_, context, destination, dockerfile, context_cm, registry_mirror) = cluster.calls[3]
+    assert context == f"dir://{m.BUILD_CONTEXT_MOUNT}"
+    assert not context.startswith("git://")
+    assert context_cm == m.BUILD_CONTEXT_CONFIGMAP
+    assert registry_mirror == mirror
     assert destination == f"registry.engagement-{ID}.svc:5000/target:latest"
     assert prov.target_image == destination
     assert prov.target_port == 8080
-    assert context == f"git://{REPO}"
     assert dockerfile == "Dockerfile"
 
 
@@ -108,8 +191,11 @@ def test_registry_not_ready_is_provision_error():
     cluster = FakeCluster({"registry": ["Failed"], "build": ["Succeeded"]})
     with pytest.raises(ProvisionError, match="registry"):
         _run(cluster)
-    # Build is never attempted if the registry never came up.
-    assert not any(isinstance(c, tuple) and c[0] == "build_pod" for c in cluster.calls)
+    # Neither the clone nor the build is attempted if the registry never came up.
+    assert not any(
+        isinstance(c, tuple) and c[0] in ("build_context", "build_pod")
+        for c in cluster.calls
+    )
 
 
 def test_build_failure_is_provision_error():
@@ -119,8 +205,7 @@ def test_build_failure_is_provision_error():
 
 
 def test_build_timeout_is_provision_error():
-    # Never terminal: watch_pod times out. FakeClock-free: real now/sleep injected
-    # via _run would loop, so drive a clock that trips the deadline immediately.
+    # Never terminal: watch_pod times out. Drive a clock that trips the deadline.
     cluster = FakeCluster({"registry": ["Running"], "build": ["Running"]})
     clock = {"t": 0.0}
 
@@ -132,10 +217,84 @@ def test_build_timeout_is_provision_error():
         phaseb_provision(
             REPO, _ctx(), cluster, target_port=8080,
             build_timeout_s=1.0, now=now, sleep=lambda s: None,
+            resolve_fn=_fake_clone(), mirror_fn=_mirror_recorder(),
         )
 
 
-def test_kaniko_context_prefixes_bare_ref_but_passes_scheme_through():
-    assert _kaniko_context("github.com/acme/app") == "git://github.com/acme/app"
-    assert _kaniko_context("git://github.com/acme/app#main") == "git://github.com/acme/app#main"
-    assert _kaniko_context("https://x/y.git") == "https://x/y.git"
+def test_oversize_context_fails_closed():
+    # A repo whose packed context blows the 1 MiB ConfigMap ceiling fails closed,
+    # before any build Pod is launched.
+    big = "x" * (1024 * 1024 + 1)
+    cluster = FakeCluster({"registry": ["Running"], "build": ["Succeeded"]})
+    with pytest.raises(ProvisionError, match="ceiling"):
+        _run(cluster, resolve_fn=_fake_clone(extra={"big.txt": big}))
+    assert not any(isinstance(c, tuple) and c[0] == "build_pod" for c in cluster.calls)
+
+
+def test_mirror_failure_fails_closed():
+    # A base-image copy that fails surfaces as a clean ProvisionError, not a crash,
+    # and no build Pod is launched.
+    def boom(src, dst):
+        raise RuntimeError("crane exploded")
+
+    cluster = FakeCluster({"registry": ["Running"], "build": ["Succeeded"]})
+    with pytest.raises(ProvisionError, match="preparation failed"):
+        _run(cluster, mirror_fn=boom)
+    assert not any(isinstance(c, tuple) and c[0] == "build_pod" for c in cluster.calls)
+
+
+def test_dir_context_ref_passes_through_without_clone_or_mirror():
+    # A ref that already names an in-cluster `dir://` context skips the clone/mirror
+    # path entirely (no ConfigMap created here; the caller staged it).
+    cluster = FakeCluster({"registry": ["Running"], "build": ["Succeeded"]})
+    resolve_fn = _fake_clone()
+    mirror_fn = _mirror_recorder()
+    phaseb_provision(
+        "dir:///workspace", _ctx(), cluster, target_port=8080,
+        now=lambda: 0.0, sleep=lambda s: None,
+        resolve_fn=resolve_fn, mirror_fn=mirror_fn,
+    )
+    assert "ref" not in resolve_fn.seen
+    assert mirror_fn.calls == []
+    (_, context, _dest, _df, context_cm, registry_mirror) = cluster.calls[2]
+    assert context == "dir:///workspace"
+    assert context_cm is None and registry_mirror is None
+
+
+def test_external_bases_skips_scratch_stages_and_args():
+    dockerfile = (
+        "FROM busybox:1.36 AS build\n"
+        "RUN echo hi\n"
+        "FROM scratch\n"
+        "FROM build\n"  # a prior stage — not an external pull
+        "FROM ghcr.io/acme/base:1\n"
+        "FROM $DYNAMIC\n"
+        "FROM busybox:1.36\n"  # duplicate of the first — de-duplicated
+    )
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "Dockerfile").write_text(dockerfile)
+    assert _external_bases(tmp / "Dockerfile") == ["busybox:1.36", "ghcr.io/acme/base:1"]
+
+
+def test_external_bases_missing_dockerfile_fails_closed():
+    tmp = Path(tempfile.mkdtemp())
+    with pytest.raises(ProvisionError, match="Dockerfile"):
+        _external_bases(tmp / "Dockerfile")
+
+
+def test_mirror_dst_normalizes_host_tag_and_digest():
+    mirror = "registry.engagement-eng1.svc:5000"
+    # docker-hub short name gains `library/` and defaults to `:latest`
+    assert _mirror_dst("busybox", mirror) == f"{mirror}/library/busybox:latest"
+    assert _mirror_dst("busybox:1.36", mirror) == f"{mirror}/library/busybox:1.36"
+    # docker-hub user/repo keeps its path
+    assert _mirror_dst("acme/app:2", mirror) == f"{mirror}/acme/app:2"
+    # explicit registry host is dropped (mirror swaps the host)
+    assert _mirror_dst("ghcr.io/org/img:tag", mirror) == f"{mirror}/org/img:tag"
+    # host with a port is recognized as a host, not a tag
+    assert _mirror_dst("reg.io:5000/org/img", mirror) == f"{mirror}/org/img:latest"
+    # digest suffix is preserved
+    assert (
+        _mirror_dst("ghcr.io/org/img@sha256:abc", mirror)
+        == f"{mirror}/org/img@sha256:abc"
+    )
