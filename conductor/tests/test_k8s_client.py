@@ -49,6 +49,9 @@ class FakeCoreV1:
     def create_namespaced_secret(self, namespace, body):
         self.calls.append(("create_namespaced_secret", {"namespace": namespace, "body": body}))
 
+    def create_namespaced_config_map(self, namespace, body):
+        self.calls.append(("create_namespaced_config_map", {"namespace": namespace, "body": body}))
+
     def create_namespaced_pod(self, namespace, body):
         self.calls.append(("create_namespaced_pod", {"namespace": namespace, "body": body}))
 
@@ -177,6 +180,32 @@ def test_create_build_pod_uses_pod_api_with_kaniko_args():
     args = pod["body"]["spec"]["containers"][0]["args"]
     assert "--context=git://github.com/acme/vuln-app#main" in args
     assert "--destination=reg/target:latest" in args
+
+
+def test_create_build_context_configmap_calls_api():
+    api = FakeCoreV1()
+    name = EngagementCluster(api, ID).create_build_context_configmap(
+        {"Dockerfile": "FROM busybox:1.36\n"}
+    )
+    assert name == "build-context"
+    cm = next(kw for n, kw in api.calls if n == "create_namespaced_config_map")
+    assert cm["namespace"] == NS
+    assert cm["body"]["kind"] == "ConfigMap"
+    assert cm["body"]["data"]["Dockerfile"] == "FROM busybox:1.36\n"
+
+
+def test_build_pod_forwards_registry_mirror():
+    api = FakeCoreV1()
+    EngagementCluster(api, ID).create_build_pod(
+        context="dir:///workspace",
+        destination="reg/target:latest",
+        context_configmap="build-context",
+        registry_mirror="registry.engagement-eng1.svc:5000",
+    )
+    pod = next(kw for name, kw in api.calls if name == "create_namespaced_pod")
+    args = pod["body"]["spec"]["containers"][0]["args"]
+    assert "--registry-mirror=registry.engagement-eng1.svc:5000" in args
+    assert "--insecure-pull" in args
 
 
 def test_create_registry_pod_and_service_return_endpoint():

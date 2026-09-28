@@ -60,6 +60,7 @@ class CoreV1(Protocol):
     def create_namespace(self, body: Any) -> Any: ...
     def delete_namespace(self, name: str) -> Any: ...
     def create_namespaced_secret(self, namespace: str, body: Any) -> Any: ...
+    def create_namespaced_config_map(self, namespace: str, body: Any) -> Any: ...
     def create_namespaced_pod(self, namespace: str, body: Any) -> Any: ...
     def create_namespaced_service(self, namespace: str, body: Any) -> Any: ...
     def read_namespaced_pod(self, name: str, namespace: str) -> Any: ...
@@ -147,6 +148,22 @@ class EngagementCluster:
             body=m.secret_manifest(self.engagement_id, api_key),
         )
 
+    def create_build_context_configmap(
+        self, files: Mapping[str, str], *, name: str = m.BUILD_CONTEXT_CONFIGMAP
+    ) -> str:
+        """Create the build-context ConfigMap and return its name (M5 mirror path).
+
+        `files` is the packed repo workdir (relative path -> text). The build Pod
+        mounts this read-only and Kaniko builds from a `dir://` context, so the
+        build fetches its context in-cluster under the M7 default-deny egress. The
+        returned name is what `create_build_pod(context_configmap=...)` takes.
+        """
+        self._api.create_namespaced_config_map(
+            namespace=self.namespace,
+            body=m.build_context_configmap_manifest(self.engagement_id, files, name),
+        )
+        return name
+
     # --- target-side objects (untrusted: never see the key) ------------------
 
     def create_registry_pod(self) -> None:
@@ -172,6 +189,7 @@ class EngagementCluster:
         dockerfile: str = m.DEFAULT_DOCKERFILE,
         image: str = m.KANIKO_IMAGE,
         context_configmap: str | None = None,
+        registry_mirror: str | None = None,
     ) -> None:
         """Launch the Kaniko build Pod that builds the target image (M8).
 
@@ -183,6 +201,10 @@ class EngagementCluster:
         `context_configmap`, when set, supplies the build context from an in-cluster
         ConfigMap (pair with a `dir://` `context`) so the build needs no external
         egress — the M8 live-proof path under the M7 default-deny matrix.
+
+        `registry_mirror`, when set, forwards through so Kaniko resolves external
+        `FROM` bases against the in-cluster mirror the conductor preloaded (M5),
+        again needing no external egress.
         """
         self._api.create_namespaced_pod(
             namespace=self.namespace,
@@ -193,6 +215,7 @@ class EngagementCluster:
                 dockerfile=dockerfile,
                 image=image,
                 context_configmap=context_configmap,
+                registry_mirror=registry_mirror,
             ),
         )
 

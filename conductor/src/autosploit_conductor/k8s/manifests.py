@@ -67,9 +67,15 @@ TARGET_SERVICE_NAME = "target"
 # isolation is the gVisor jail, the absence of any docker socket / hostPath, and no
 # privilege — never in-container non-root. The tests assert that shape.
 BUILD_POD_NAME = "build"
-# Placeholder Kaniko executor ref, kept obvious like `_DEFAULT_ATTACKER_IMAGE` so an
-# unpinned build image can't masquerade as vetted. Digest-pin lands with M9.
-KANIKO_IMAGE = "gcr.io/kaniko-project/executor:latest"
+# Kaniko executor, pinned by digest (M5). The `--registry-mirror` behaviour the
+# mirror path relies on (Phase 5) is version-sensitive, so the executor must be an
+# exact image, never a floating `:latest`. The `:latest` tag is kept alongside the
+# digest for human provenance only — the pull resolves by digest. Re-pin
+# deliberately (resolve the new index digest) when bumping Kaniko.
+KANIKO_IMAGE = (
+    "gcr.io/kaniko-project/executor:latest"
+    "@sha256:4e7a52dd1f14872430652bb3b027405b8dfd17c4538751c620ac005741ef9698"
+)
 # Default Dockerfile path within the build context (Dockerfile repos only for MVP;
 # compose is deferred, roadmap §5).
 DEFAULT_DOCKERFILE = "Dockerfile"
@@ -84,6 +90,20 @@ REGISTRY_POD_NAME = "registry"
 REGISTRY_SERVICE_NAME = "registry"
 REGISTRY_IMAGE = "registry:2"
 REGISTRY_PORT = 5000
+
+# --- M5: the in-cluster repo/base mirror (roadmap M8 "Open (→ M5)") -----------
+#
+# Under the live M7 default-deny egress the Kaniko build Pod can reach no external
+# git host or base-image registry, so external `git clone` and `FROM <external>`
+# base pulls are denied. M5 closes this WITHOUT widening the egress matrix: the
+# conductor (which has egress) clones the repo and preloads each base image into
+# the per-engagement registry, then Kaniko builds from an in-cluster `dir://`
+# ConfigMap context and resolves bases via `--registry-mirror` pointed at that same
+# registry. Everything the build touches now lives inside the namespace.
+#
+# The ConfigMap name the packed repo workdir is mounted from (paired with a
+# `dir://` context, see `kaniko_build_pod_manifest`).
+BUILD_CONTEXT_CONFIGMAP = "build-context"
 
 # --- M7: the egress matrix (orchestration.md §4.1, §6 [1]) -------------------
 #
@@ -155,6 +175,17 @@ def registry_endpoint(engagement_id: str) -> str:
     The short Service form (`registry.engagement-<id>.svc:5000`) — in-cluster DNS
     resolves it for the build Pod's push. The image ref appends a repo/tag."""
     return f"{REGISTRY_SERVICE_NAME}.{namespace_name(engagement_id)}.svc:{REGISTRY_PORT}"
+
+
+def registry_mirror_endpoint(engagement_id: str) -> str:
+    """`host:port` Kaniko's `--registry-mirror` pulls base images from (M5).
+
+    Same per-engagement registry as the push target (`registry_endpoint`): the
+    conductor preloads each external base into it, so a `FROM <external>` resolves
+    against the mirror without any egress. Kept as its own name so the mirror role
+    reads distinctly from the push role at the call sites, even though the host is
+    the same in-cluster registry."""
+    return registry_endpoint(engagement_id)
 
 
 def target_image_ref(engagement_id: str) -> str:
@@ -242,6 +273,35 @@ def registry_service_manifest(engagement_id: str) -> dict[str, Any]:
     }
 
 
+def build_context_configmap_manifest(
+    engagement_id: str,
+    files: Mapping[str, str],
+    name: str = BUILD_CONTEXT_CONFIGMAP,
+) -> dict[str, Any]:
+    """The build-context ConfigMap: the packed repo workdir, served in-cluster (M5).
+
+    `files` maps a relative path (`Dockerfile`, `app/main.py`, …) to its text
+    content; the conductor packs the cloned repo into this and the Kaniko Pod mounts
+    it read-only at `BUILD_CONTEXT_MOUNT`, paired with a `dir://<mount>` context, so
+    the build fetches its context from inside the cluster and needs no external
+    egress under the M7 default-deny matrix. Namespaced + engagement-labelled like
+    every other object, so the namespace delete wipes it at teardown.
+
+    A ConfigMap has a hard 1 MiB ceiling; the caller (provision) enforces that and
+    fails closed on oversize — this pure builder only shapes the object.
+    """
+    return {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": name,
+            "namespace": namespace_name(engagement_id),
+            "labels": engagement_labels(engagement_id),
+        },
+        "data": dict(files),
+    }
+
+
 BUILD_CONTEXT_MOUNT = "/workspace"
 
 
@@ -254,6 +314,7 @@ def kaniko_build_pod_manifest(
     image: str = KANIKO_IMAGE,
     context_configmap: str | None = None,
     context_mount: str = BUILD_CONTEXT_MOUNT,
+    registry_mirror: str | None = None,
 ) -> dict[str, Any]:
     """The Kaniko build Pod: clone `context`, build `dockerfile`, push `destination`.
 
@@ -266,7 +327,15 @@ def kaniko_build_pod_manifest(
     it supplies the build context **from inside the cluster**, so Kaniko needs no
     external egress to fetch it. This is the in-cluster-context path the M8 live
     proof uses under the M7 default-deny egress, which denies the build Pod any
-    external git host (external clone is a tracked open item; see roadmap §5 / M5).
+    external git host.
+
+    `registry_mirror`, when given, appends `--registry-mirror=<host:port>` plus
+    `--insecure-pull` and `--skip-default-registry-fallback` (M5): base-image pulls
+    (`FROM <external>`) resolve against that in-cluster mirror — the per-engagement
+    registry the conductor preloaded — over plain HTTP, and Kaniko never falls back
+    to the external registry (which the M7 egress denies anyway). This is what
+    closes the external-`FROM` gap without widening the egress matrix. `--insecure`
+    (push-side) still applies independently; the mirror flags govern pulls.
 
     Security-load-bearing (module docstring, roadmap M8 exit): `runtimeClassName:
     gvisor` and `restartPolicy: Never` like every engagement Pod, and — the whole
@@ -291,6 +360,16 @@ def kaniko_build_pod_manifest(
             "--insecure",
         ],
     }
+    if registry_mirror is not None:
+        container["args"] += [
+            # Resolve `FROM <external>` bases against the in-cluster mirror the
+            # conductor preloaded, over plain HTTP, and never fall back to the
+            # external registry (denied by the M7 egress anyway). This is the pull
+            # half of the M5 mirror path; `--insecure` above is the push half.
+            f"--registry-mirror={registry_mirror}",
+            "--insecure-pull",
+            "--skip-default-registry-fallback",
+        ]
     spec: dict[str, Any] = {
         "runtimeClassName": RUNTIME_CLASS,
         "restartPolicy": "Never",

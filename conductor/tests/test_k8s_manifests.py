@@ -129,6 +129,65 @@ def test_build_pod_mounts_in_cluster_context_configmap_readonly():
     assert "docker.sock" not in blob
 
 
+# --- M5: the in-cluster repo/base mirror -------------------------------------
+
+
+def test_kaniko_image_is_digest_pinned():
+    # The --registry-mirror behaviour Phase 5 relies on is version-sensitive, so the
+    # executor must be pinned by digest, never a floating tag.
+    assert "@sha256:" in m.KANIKO_IMAGE
+
+
+def test_build_context_configmap_shape():
+    cm = m.build_context_configmap_manifest(
+        ID, {"Dockerfile": "FROM busybox:1.36\n", "app/main.py": "print('x')\n"}
+    )
+    assert cm["kind"] == "ConfigMap"
+    assert cm["metadata"]["name"] == "build-context"
+    assert cm["metadata"]["namespace"] == f"engagement-{ID}"
+    assert cm["metadata"]["labels"] == {"engagement": ID}
+    assert cm["data"]["Dockerfile"] == "FROM busybox:1.36\n"
+    assert cm["data"]["app/main.py"] == "print('x')\n"
+
+
+def test_build_context_configmap_name_overridable_and_copies_files():
+    files = {"Dockerfile": "FROM scratch\n"}
+    cm = m.build_context_configmap_manifest(ID, files, name="ctx-2")
+    assert cm["metadata"]["name"] == "ctx-2"
+    # The builder copies the mapping — mutating the caller's dict must not leak in.
+    files["Dockerfile"] = "tampered"
+    assert cm["data"]["Dockerfile"] == "FROM scratch\n"
+
+
+def test_registry_mirror_endpoint_is_the_engagement_registry():
+    assert m.registry_mirror_endpoint(ID) == m.registry_endpoint(ID)
+
+
+def test_kaniko_pod_has_registry_mirror_args():
+    # The mirror path (M5): external FROM bases resolve against the in-cluster mirror
+    # over plain HTTP with no fallback to the (egress-denied) external registry.
+    mirror = m.registry_mirror_endpoint(ID)
+    pod = m.kaniko_build_pod_manifest(
+        ID,
+        context=f"dir://{m.BUILD_CONTEXT_MOUNT}",
+        destination="reg/target:1",
+        context_configmap="build-context",
+        registry_mirror=mirror,
+    )
+    args = pod["spec"]["containers"][0]["args"]
+    assert f"--registry-mirror={mirror}" in args
+    assert "--insecure-pull" in args
+    assert "--skip-default-registry-fallback" in args
+    # Push-side --insecure is independent and still present.
+    assert "--insecure" in args
+    # Mirror args are opt-in: absent when registry_mirror is not passed.
+    plain = m.kaniko_build_pod_manifest(ID, context="git://h/o/r#m", destination="d")
+    plain_args = plain["spec"]["containers"][0]["args"]
+    assert not any(a.startswith("--registry-mirror=") for a in plain_args)
+    assert "--insecure-pull" not in plain_args
+    assert "--skip-default-registry-fallback" not in plain_args
+
+
 # --- M8: the per-engagement in-cluster registry ------------------------------
 
 
