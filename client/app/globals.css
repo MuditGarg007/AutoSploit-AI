@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+/*
+  AutoSploit AI theme.
+  True-black AMOLED canvas, hairline borders, one burgundy accent used sparingly.
+  Single accent only: no second color, no gradients.
+*/
+
+:root {
+  color-scheme: dark;
+
+  /* structure */
+  --canvas: #000000; /* AMOLED page background — true black only */
+  --surface: #0e0e0e; /* cards / panels */
+  --surface-2: #151515; /* elevated / hovered surface */
+  --border: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* text */
+  --text: #ffffff; /* headings */
+  --muted: #a1a1aa; /* body (zinc-400) */
+  --faint: #71717a; /* captions, mono labels (zinc-500) */
+
+  /* accent — single burgundy */
+  --accent: #8c1c2b;
+  --accent-bright: #a8283a; /* hover only */
+  --accent-deep: #5a101c; /* pressed */
+  --accent-soft: rgba(140, 28, 43, 0.14); /* washes, focus rings */
+  --accent-line: rgba(140, 28, 43, 0.30); /* accent hairlines */
+  --accent-purple: var(--accent-deep); /* legacy alias, burgundy (no purple) */
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-bright: var(--accent-bright);
+  --color-accent-deep: var(--accent-deep);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-line);
+  --color-accent-purple: var(--accent-purple);
+
+  --font-sans: var(--font-geist-sans);
+  /* Site uses a single typeface. The mono token maps to Geist Sans so existing
+     `font-mono` utilities render in the same family as everything else. */
+  --font-mono: var(--font-geist-sans);
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background: var(--canvas);
+  color: var(--muted);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* thin, quiet scrollbar in the accent family */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #222222;
+  border-radius: 6px;
+  border: 2px solid var(--canvas);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #333333;
+}
