@@ -9,7 +9,7 @@ const geistSans = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "AutoSploit AI — autonomous red-team",
+  title: "AutoSploit AI: autonomous red-team",
   description:
     "Isolated, disposable red-team engagements. Real exploits, contained in gVisor-sandboxed pods, torn down on exit.",
 };

@@ -10,7 +10,7 @@
   color-scheme: dark;
 
   /* structure */
-  --canvas: #000000; /* AMOLED page background — true black only */
+  --canvas: #000000; /* AMOLED page background: true black only */
   --surface: #0e0e0e; /* cards / panels */
   --surface-2: #151515; /* elevated / hovered surface */
   --border: rgba(255, 255, 255, 0.10);
@@ -21,7 +21,7 @@
   --muted: #a1a1aa; /* body (zinc-400) */
   --faint: #71717a; /* captions, mono labels (zinc-500) */
 
-  /* accent — single burgundy */
+  /* accent: single burgundy */
   --accent: #8c1c2b;
   --accent-bright: #a8283a; /* hover only */
   --accent-deep: #5a101c; /* pressed */

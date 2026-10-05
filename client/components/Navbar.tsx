@@ -1,7 +1,10 @@
-// Top navbar. Flat surface pill, hairline border, single burgundy accent.
-// No glass, no backdrop blur, no gradient wordmark (design rules).
+"use client";
+
+// Top navbar. Full-width sticky bar, single burgundy accent.
+// Transparent over the hero; liquid-glass surface fades in on scroll.
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 // Core 3 removed <SignedIn>/<SignedOut>; the replacement is <Show when=...>.
 import { Show, SignOutButton } from "@clerk/nextjs";
 
@@ -12,9 +15,24 @@ const LINKS = [
 ];
 
 export default function Navbar() {
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-5 z-50 flex justify-center px-4">
-      <nav className="pointer-events-auto flex items-center gap-2 rounded-md border border-white/10 bg-surface py-2 pl-5 pr-2">
+    <header
+      className={`fixed inset-x-0 top-0 z-50 w-full transition-colors duration-300 ${
+        scrolled
+          ? "bg-black/40 backdrop-blur-xl backdrop-saturate-150"
+          : "bg-transparent"
+      }`}
+    >
+      <nav className="mx-auto flex w-full max-w-7xl items-center gap-2 px-4 py-3 sm:px-6">
         {/* brand */}
         <span className="mr-2 text-sm font-semibold tracking-tight text-text">
           AutoSploit <span className="text-accent-bright">AI</span>
@@ -34,6 +52,7 @@ export default function Navbar() {
         </div>
 
         {/* auth */}
+        <div className="ml-auto" />
         <Show when="signed-out">
           <Link
             href="/login"
@@ -65,6 +84,6 @@ export default function Navbar() {
           </SignOutButton>
         </Show>
       </nav>
-    </div>
+    </header>
   );
 }

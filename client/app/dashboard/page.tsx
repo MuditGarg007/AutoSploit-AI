@@ -16,12 +16,12 @@ import {
   DollarIcon,
   HaltIcon,
 } from "@/components/dashboard/icons";
-import { MOCK_ENGAGEMENTS } from "@/lib/mock-engagements";
+import type { EngagementRow } from "@/lib/mock-engagements";
+import { listEngagements } from "@/lib/api";
 import { isTerminal } from "@/lib/events";
 import { fmtUsd, fmtInt } from "@/lib/format";
 
-function summarize(): Stat[] {
-  const rows = MOCK_ENGAGEMENTS;
+function summarize(rows: EngagementRow[]): Stat[] {
   const active = rows.filter((e) => !isTerminal(e.state)).length;
   const stopped = rows.filter(
     (e) => e.state === "halted" || e.state === "failed",
@@ -53,7 +53,8 @@ function summarize(): Stat[] {
   ];
 }
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const rows = await listEngagements();
   return (
     <DashboardShell>
       <PageHeader
@@ -71,7 +72,7 @@ export default function DashboardPage() {
       />
 
       <div className="mt-6">
-        <StatTiles stats={summarize()} />
+        <StatTiles stats={summarize(rows)} />
       </div>
 
       <div className="mt-8">
@@ -79,12 +80,10 @@ export default function DashboardPage() {
           title="All runs"
           flush
           aside={
-            <span className="font-mono text-xs text-faint">
-              {MOCK_ENGAGEMENTS.length}
-            </span>
+            <span className="font-mono text-xs text-faint">{rows.length}</span>
           }
         >
-          <EngagementList rows={MOCK_ENGAGEMENTS} />
+          <EngagementList rows={rows} />
         </Panel>
       </div>
     </DashboardShell>

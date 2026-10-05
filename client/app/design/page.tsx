@@ -46,7 +46,7 @@ export default function DesignPage() {
           <span className="font-mono text-xs text-zinc-600">design v0</span>
         </header>
 
-        {/* hero — the tone-setter */}
+        {/* hero: the tone-setter */}
         <div className="mb-6 border-b border-white/10 py-16">
           <span className="font-mono text-xs uppercase tracking-widest text-zinc-500">
             autonomous red-team
@@ -58,7 +58,7 @@ export default function DesignPage() {
           </h1>
           <p className="mt-5 max-w-xl text-lg leading-relaxed text-zinc-400">
             Isolated, disposable engagements. Real exploits, contained in
-            gVisor-sandboxed pods. Full teardown on exit — nothing left running.
+            gVisor-sandboxed pods. Full teardown on exit. Nothing left running.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <button
@@ -93,7 +93,7 @@ export default function DesignPage() {
             </div>
             <div>
               <p className="max-w-xl text-lg leading-relaxed text-zinc-400">
-                Body copy stays quiet and readable — zinc-400 on near-black, 1.6
+                Body copy stays quiet and readable, zinc-400 on near-black, 1.6
                 line height. No decorative faces, no gradients on text.
               </p>
             </div>
@@ -177,7 +177,7 @@ export default function DesignPage() {
         </Row>
 
         <footer className="border-t border-white/10 py-10 font-mono text-xs text-zinc-600">
-          design reference — delete /design before ship
+          design reference, delete /design before ship
         </footer>
       </div>
     </div>

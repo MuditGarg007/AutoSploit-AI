@@ -48,8 +48,9 @@ const TERMINAL_STATES: EngagementState[] = [
 
 export interface DispatchInput {
   userId: string;
+  // repoId is the whole contract: probeDeployable resolves the authoritative
+  // fullName from it (a client-supplied fullName was never read — removed).
   repoId: number;
-  repoFullName: string;
 }
 
 export interface DispatchResult {

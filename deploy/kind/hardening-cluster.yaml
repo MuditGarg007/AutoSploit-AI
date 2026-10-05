@@ -10,7 +10,9 @@ networking:
 nodes:
   - role: control-plane
     extraMounts:
-      # Host gVisor binaries (static, x86_64) visible inside the node container.
+      # Host gVisor binaries (static, host arch — x86_64 on the KVM2/dev box,
+      # aarch64 on the Oracle A1 box; see docs/oracle-a1-h3-runbook.md §A.4)
+      # visible inside the node container.
       # Install them first: see scripts/m4-bootstrap.sh header.
       - hostPath: /usr/local/bin/runsc
         containerPath: /usr/local/bin/runsc

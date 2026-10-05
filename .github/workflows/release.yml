@@ -37,20 +37,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build image
-        run: docker build -t $IMAGE:$GITHUB_SHA -t $IMAGE:latest ./control-plane
+      # Multi-arch (docs/oracle-a1-h3-runbook.md §A.1): the Oracle A1 substrate is
+      # aarch64, so every image must publish linux/arm64 alongside linux/amd64. QEMU
+      # emulates arm64 on the x86 runner; the pushed manifest list lets each node pull
+      # its own arch by digest.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Scan + leak checks need the image loaded into the local Docker daemon, which a
+      # multi-platform manifest cannot be. Build+load the amd64 image once for scanning;
+      # the arm64 layers are built again (from cache) in the push step below.
+      - name: Build image (amd64, for scanning)
+        run: |
+          docker buildx build --platform linux/amd64 --load \
+            -t $IMAGE:scan ./control-plane
 
       - name: Scan image (Trivy) — fail on high/critical
         uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: $IMAGE:$GITHUB_SHA
+          image-ref: $IMAGE:scan
           severity: HIGH,CRITICAL
           exit-code: "1"
           format: table
 
       - name: Leak scan (model key must never be in the image)
         run: |
-          docker run --rm --entrypoint sh $IMAGE:$GITHUB_SHA -c \
+          docker run --rm --entrypoint sh $IMAGE:scan -c \
             'grep -rIs "OPENROUTER_API_KEY" / 2>/dev/null | grep -v "^Binary" || true' \
             | tee /tmp/leaks.txt
           if [ -s /tmp/leaks.txt ]; then
@@ -58,8 +72,10 @@ jobs:
           fi
           echo "✅ no OPENROUTER_API_KEY reference in image"
 
-      - name: Push image
-        run: docker push $IMAGE:$GITHUB_SHA && docker push $IMAGE:latest
+      - name: Build and push multi-arch manifest (amd64 + arm64)
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -t $IMAGE:$GITHUB_SHA -t $IMAGE:latest --push ./control-plane
 
   # Roadmap M5 role 1: build, scan, and push the attacker HARNESS image and emit its
   # digest, so the conductor pulls it by digest (deploy-gke consumes the output). Same
@@ -80,20 +96,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build harness image
-        run: docker build -t $HARNESS_IMAGE:$GITHUB_SHA -t $HARNESS_IMAGE:latest ./harness
+      # Multi-arch (docs/oracle-a1-h3-runbook.md §A.1): the harness runs on the aarch64
+      # A1 node, so its manifest must include linux/arm64. The manifest-list digest the
+      # conductor pins resolves to the arm64 image automatically on that node.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build+load the amd64 image once so the scan + leak checks can run against a
+      # locally-loaded (single-arch) image; the push step rebuilds both arches from cache.
+      - name: Build harness image (amd64, for scanning)
+        run: |
+          docker buildx build --platform linux/amd64 --load \
+            -t $HARNESS_IMAGE:scan ./harness
 
       - name: Scan image (Trivy) — fail on high/critical
         uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: $HARNESS_IMAGE:$GITHUB_SHA
+          image-ref: $HARNESS_IMAGE:scan
           severity: HIGH,CRITICAL
           exit-code: "1"
           format: table
 
       - name: Leak scan (model key value must never be in the image)
         run: |
-          docker run --rm --entrypoint sh $HARNESS_IMAGE:$GITHUB_SHA -c \
+          docker run --rm --entrypoint sh $HARNESS_IMAGE:scan -c \
             'grep -rIsE "sk-or-[A-Za-z0-9-]{8,}" / 2>/dev/null | grep -v "^Binary" || true' \
             | tee /tmp/harness-leaks.txt
           if [ -s /tmp/harness-leaks.txt ]; then
@@ -101,15 +129,18 @@ jobs:
           fi
           echo "✅ no model-key value in the harness image"
 
-      - name: Push image and emit digest
+      - name: Build and push multi-arch manifest and emit digest
         id: push
         run: |
-          docker push $HARNESS_IMAGE:$GITHUB_SHA && docker push $HARNESS_IMAGE:latest
-          # RepoDigests is populated after a successful push; the by-digest ref is what
-          # the conductor pulls (AUTOSPLOIT_HARNESS_IMAGE).
-          digest=$(docker inspect --format='{{index .RepoDigests 0}}' $HARNESS_IMAGE:$GITHUB_SHA)
-          echo "harness image digest: $digest"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -t $HARNESS_IMAGE:$GITHUB_SHA -t $HARNESS_IMAGE:latest \
+            --push --metadata-file /tmp/harness-meta.json ./harness
+          # The manifest-list digest the conductor pulls (AUTOSPLOIT_HARNESS_IMAGE);
+          # buildx writes it to the metadata file. A single by-digest ref resolves to
+          # the right arch on each node.
+          digest_ref="$HARNESS_IMAGE@$(jq -r '."containerimage.digest"' /tmp/harness-meta.json)"
+          echo "harness image digest: $digest_ref"
+          echo "digest=$digest_ref" >> "$GITHUB_OUTPUT"
 
   redteam-kind:
     runs-on: ubuntu-latest

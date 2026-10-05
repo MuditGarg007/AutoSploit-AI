@@ -377,7 +377,11 @@ void main() {
   light = max(light, 0.045 * reveal);
   float span = mix(1.0 - uStretch, 1.0, level) + glow * 0.3;
   span = clamp(span, 0.08, 1.0) * mix(0.1, 1.0, reveal);
-  float tint = clamp(max(glint * 1.4, glow * 0.9) + sweep, 0.0, 1.0);
+  float waveTint = clamp(max(glint * 1.4, sweep), 0.0, 1.0);
+  float trail = clamp(glow, 0.0, 1.0);
+  // Wave/intro tint lives in [0,1]; mouse trail is encoded above 1.0 so the
+  // slat pass can push only the trail toward white, not the wave crests.
+  float tint = waveTint + trail * 2.0;
   float lean = clamp(flow.x / 1400.0, -1.0, 1.0) * uLean * reveal;
 
   fragColor = vec4(clamp(light, 0.0, 1.0), span, tint, 0.5 + 0.5 * lean);
@@ -424,7 +428,13 @@ void main() {
     vec2 halfSize = vec2(uSlat.x * 0.5, uSlat.y * 0.5 * field.g);
     float radius = uRound * min(halfSize.x, halfSize.y);
     float alpha = clamp(0.5 - pill(turned, halfSize, radius) * uDpr, 0.0, 1.0) * field.r;
-    if (alpha > slat.a) slat = vec4(mix(uColor, uGlintColor, field.b) * alpha, alpha);
+    if (alpha > slat.a) {
+      float wave = clamp(field.b, 0.0, 1.0);
+      float trail = clamp((field.b - 1.0) * 0.5, 0.0, 1.0);
+      vec3 col = mix(uColor, uGlintColor, wave);
+      col = mix(col, vec3(1.0), trail);
+      slat = vec4(col * alpha, alpha);
+    }
   }
   fragColor = slat + background * (1.0 - slat.a);
 }
@@ -832,7 +842,7 @@ const MicroSlats = ({
         for (const [u, v, du, dv, turn] of splats) {
           if (turn === null) {
             splat(fluid.velocity, [u, v], [du * SPLAT_FORCE, dv * SPLAT_FORCE, 0], radius);
-            splat(fluid.ink, [u, v], [0.13, 0, 0], radius);
+            splat(fluid.ink, [u, v], [0.35, 0, 0], radius);
             continue;
           }
           const jet = radius * 0.55;

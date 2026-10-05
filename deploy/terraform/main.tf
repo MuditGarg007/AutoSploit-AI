@@ -1,10 +1,6 @@
 terraform {
   required_version = ">= 1.5"
   required_providers {
-    google = {
-      source  = "hashicorp/google"
-      version = "~> 5.0"
-    }
     vault = {
       source  = "hashicorp/vault"
       version = "~> 3.0"
@@ -16,20 +12,11 @@ terraform {
   }
 }
 
-variable "project_id" {
-  type        = string
-  description = "GCP project (demo substrate, docs/control-plane.md §7)."
-}
-
-variable "region" {
-  type    = string
-  default = "us-central1"
-}
-
-variable "cluster_name" {
-  type    = string
-  default = "autosploit-demo"
-}
+# GKE-specific inputs/resources were stripped for the self-hosted substrate
+# (docs/oracle-a1-h3-runbook.md §3, docs/vps-h3-runbook.md §3): the kind + Cilium +
+# gVisor cluster is stood up on the VPS by scripts/m4-bootstrap.sh, not via Terraform,
+# and report blobs live in Cloudflare R2, not a GCS bucket. Only the minimal Vault
+# (transit engine for the GitHub-token split) remains managed here.
 
 variable "bootstrap_vault_token" {
   type        = string
@@ -43,52 +30,9 @@ variable "vault_addr" {
   default = "http://localhost:8200"
 }
 
-provider "google" {
-  project = var.project_id
-  region  = var.region
-}
-
 provider "vault" {
   address = var.vault_addr
   token   = var.bootstrap_vault_token != "" ? var.bootstrap_vault_token : null
-}
-
-# --- GKE Autopilot cluster (only spun up when demoing, §7) ---
-resource "google_container_cluster" "autosploit" {
-  name     = var.cluster_name
-  location = var.region
-
-  # Autopilot = no node pool management; cost stays near zero when the cluster
-  # is torn down between demos (orchestration.md §7).
-  enable_autopilot = true
-
-  # Minimal default; private cluster keeps the plane off the public internet.
-  private_cluster_config {
-    enable_private_nodes    = true
-    enable_private_endpoint = false
-  }
-
-  deletion_protection = false
-}
-
-# --- GHCR image pull secret ---
-resource "google_service_account" "ghcr_pull" {
-  account_id   = "autosploit-ghcr-pull"
-  display_name = "Pulls the control-plane image from GHCR"
-}
-
-# --- IAM role bindings for the deployment service account ---
-resource "google_service_account" "plane" {
-  account_id   = "autosploit-plane"
-  display_name = "Control plane workload identity"
-}
-
-# --- Object store bucket (Reports slice E + Kafka Connect S3 sink, §8.2) ---
-resource "google_storage_bucket" "reports" {
-  name          = "autosploit-reports-${var.project_id}"
-  location      = var.region
-  force_destroy = true
-  uniform_bucket_level_access = true
 }
 
 # --- Vault: Transit engine + policy + k8s auth role (control-plane.md §9.1) ---
@@ -125,18 +69,4 @@ resource "vault_kubernetes_auth_backend_role" "plane" {
   bound_service_account_names    = ["control-plane"]
   bound_service_account_namespaces = ["default"]
   token_policies                 = ["autosploit-plane-transit"]
-}
-
-# --- Outputs ---
-output "cluster_endpoint" {
-  value = google_container_cluster.autosploit.endpoint
-}
-
-output "cluster_ca_certificate" {
-  value = google_container_cluster.autosploit.master_auth[0].cluster_ca_certificate
-  sensitive = true
-}
-
-output "reports_bucket" {
-  value = google_storage_bucket.reports.name
 }

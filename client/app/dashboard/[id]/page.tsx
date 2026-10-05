@@ -5,13 +5,21 @@
 // Rendered inside the dashboard shell (sidebar + top bar).
 import DashboardShell from "@/components/dashboard/DashboardShell";
 import LiveEngagement from "@/components/dashboard/LiveEngagement";
-import { findEngagement } from "@/lib/mock-engagements";
+import { getEngagement } from "@/lib/api";
 
 export default async function EngagementPage({
   params,
 }: PageProps<"/dashboard/[id]">) {
   const { id } = await params;
-  const repo = findEngagement(id)?.repo ?? id;
+  // Label only; the live event stream is owned client-side by LiveEngagement.
+  // getEngagement falls back to the mock index when no backend is configured,
+  // and an unknown id just shows the id itself.
+  let repo = id;
+  try {
+    repo = (await getEngagement(id))?.repo ?? id;
+  } catch {
+    // Backend rejected (404/unauthorized): fall back to the raw id label.
+  }
 
   return (
     <DashboardShell>

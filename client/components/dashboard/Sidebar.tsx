@@ -84,7 +84,7 @@ export default function Sidebar() {
 
   return (
     <aside className="fixed inset-y-0 left-0 z-40 flex w-60 flex-col bg-canvas">
-      {/* brand — no borders here so the top row reads seamless with the top bar */}
+      {/* brand. No borders here so the top row reads seamless with the top bar */}
       <div className="flex h-14 items-center px-5">
         <Link href="/" className="text-sm font-semibold tracking-tight text-text">
           AutoSploit <span className="text-accent-bright">AI</span>
