@@ -10,13 +10,17 @@
 # this image by design (§3.6, §5.2 — the model key is conductor-only).
 
 # ---------- Build stage ----------
-FROM oven/bun:1.1.0 AS build
+# bun >=1.2 is required: bun.lock is the text lockfile (lockfileVersion 1), which the
+# old 1.1.0 image cannot parse — a frozen install under 1.1.0 fails with "lockfile had
+# changes, but lockfile is frozen" even over a correct, full-workspace tree. Pin 1.4.0
+# to match the dev box and keep CI/local/box builds on one bun.
+FROM oven/bun:1.4.0 AS build
 WORKDIR /app
 # Copy the whole workspace before installing. bun.lock resolves against the full
 # workspace graph (client + control-plane + packages/*), so a frozen install needs
 # every workspace's package.json present; a partial copy resolves a different graph
-# and fails with "lockfile had changes, but lockfile is frozen". .dockerignore keeps
-# node_modules/dist/.env/.git out of the context, so this stays slim and secret-free.
+# and also fails with "lockfile had changes, but lockfile is frozen". .dockerignore
+# keeps node_modules/dist/.env/.git out of the context, so this stays slim and secret-free.
 COPY . .
 RUN bun install --frozen-lockfile
 # turbo build: @autosploit/contracts (tsc) then control-plane (nest build). turbo's

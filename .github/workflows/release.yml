@@ -52,7 +52,7 @@ jobs:
       - name: Build image (amd64, for scanning)
         run: |
           docker buildx build --platform linux/amd64 --load \
-            -t $IMAGE:scan ./control-plane
+            -f control-plane/Dockerfile -t $IMAGE:scan .
 
       - name: Scan image (Trivy) — fail on high/critical
         uses: aquasecurity/trivy-action@0.24.0
@@ -75,7 +75,7 @@ jobs:
       - name: Build and push multi-arch manifest (amd64 + arm64)
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 \
-            -t $IMAGE:$GITHUB_SHA -t $IMAGE:latest --push ./control-plane
+            -f control-plane/Dockerfile -t $IMAGE:$GITHUB_SHA -t $IMAGE:latest --push .
 
   # Roadmap M5 role 1: build, scan, and push the attacker HARNESS image and emit its
   # digest, so the conductor pulls it by digest (deploy-gke consumes the output). Same
