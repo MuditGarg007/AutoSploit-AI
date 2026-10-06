@@ -76,7 +76,7 @@ describe('Reports (E) — assembled report + presigned artifacts for the owner',
     await vaultAdmin.transitCreateKey({ name: 'github-tokens' });
 
     // --- MinIO (object store) — E's S3 client points here ---
-    minio = await new GenericContainer('minio/minio:latest')
+    minio = await new GenericContainer('ghcr.io/muditgarg007/minio:RELEASE.2025-09-07T16-13-09Z')
       .withExposedPorts(9000)
       .withEnvironment({
         MINIO_ROOT_USER: 'minioadmin',

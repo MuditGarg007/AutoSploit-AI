@@ -193,7 +193,7 @@ describe('Telemetry (D-b) — Kafka Connect S3 sink archives events to MinIO', (
       .start();
 
     // --- MinIO (object store) on the same network ---
-    minio = await new GenericContainer('minio/minio:latest')
+    minio = await new GenericContainer('ghcr.io/muditgarg007/minio:RELEASE.2025-09-07T16-13-09Z')
       .withName('autosploit-minio')
       .withNetwork(network)
       .withNetworkAliases('minio')
