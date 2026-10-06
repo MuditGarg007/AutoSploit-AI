@@ -220,6 +220,60 @@ any deviation — a red line is a real seam breach; fix the seam, never loosen t
   job replacing `deploy-gke` in `release.yml`. Cutting a `v*` tag would exercise the now-fixed
   Dockerfile for the first time in CI.
 
+## GHCR setup — publish the images so the box pulls instead of building (easier next time)
+
+Phase D/E build both images locally and `kind load` them because neither was ever in
+GHCR. That works but is slow (the control-plane build + `chmod` layer is ~5 min). Once the
+Dockerfiles are known-good, publish to GHCR so any fresh box just pulls. GHCR owner is
+`muditgarg007` (GHCR lowercases the GitHub owner); images are
+`ghcr.io/muditgarg007/control-plane` and `ghcr.io/muditgarg007/harness`.
+
+**Route A — CI (preferred once merged).** `release.yml` already builds, scans (Trivy +
+leak scan), and pushes **both** images on a `v*` tag or `workflow_dispatch`; the GKE deploy
+step is environment-gated and does not block the build-push jobs. So the simplest durable
+setup is: land the Phase-D/E Dockerfile fixes, then
+
+```bash
+git tag v0.0.1-h3 && git push origin v0.0.1-h3     # triggers build+scan+push of both images
+```
+
+This is also the first time CI exercises the now-fixed control-plane Dockerfile. The harness
+Dockerfile must be green too (fix it in Phase E E0 first, or the harness-build-push job fails).
+
+**Route B — manual (mid-branch, no release).** `scripts/ghcr-push.sh` builds + tags + pushes
+both images and prints the pull-secret + helm/conductor wiring. Run it from the repo root
+after `docker login ghcr.io` with a PAT that has `write:packages`:
+
+```bash
+echo "$GHCR_PAT" | docker login ghcr.io -u muditgarg007 --password-stdin
+scripts/ghcr-push.sh --owner muditgarg007 --tag h3          # both images
+scripts/ghcr-push.sh --only harness --tag h3                # just one
+```
+
+**Pull wiring (either route).** Packages are PRIVATE by default. Either make them Public in
+the GitHub Packages UI (then no secret is needed), or create a pull secret and reference it:
+
+```bash
+kubectl create secret docker-registry ghcr-pull -n autosploit-system \
+  --docker-server=ghcr.io --docker-username=muditgarg007 --docker-password=<GHCR_PAT>
+
+# control-plane from GHCR (replaces the local-build overrides):
+helm upgrade --install control-plane deploy/helm/control-plane/ -n autosploit-system \
+  --set image.repository=ghcr.io/muditgarg007/control-plane \
+  --set image.tag=<tag> \
+  --set image.pullSecrets[0].name=ghcr-pull \
+  --set external.kafkaBrokers="" --set external.schemaRegistryUrl=""
+
+# harness for the conductor (Phase E), by tag or @sha256 digest:
+export AUTOSPLOIT_HARNESS_IMAGE=ghcr.io/muditgarg007/harness:<tag>
+```
+
+The chart already supports `image.pullSecrets` (commit `ca2e206`). Engagement Pods that pull
+the harness from a private GHCR also need the secret in their namespace — simplest is to make
+the harness package Public, since it carries no secrets. **The local-build path (`*:h3-local`
++ `kind load` + `pullPolicy=IfNotPresent`) stays valid as the offline fallback** whenever
+GHCR is unavailable or a Dockerfile is mid-fix.
+
 ## Gotchas already handled (don't re-discover)
 
 - **Images are local, not GHCR.** Build on the box + `kind load`, tag `*:h3-local`,
