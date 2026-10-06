@@ -29,10 +29,13 @@ ENV NODE_ENV=production
 # Non-root runtime user (image hardening, §8.1).
 RUN groupadd -r autosploit && useradd -r -g autosploit -m autosploit
 WORKDIR /app
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages ./packages
-COPY --from=build /app/control-plane/dist ./control-plane/dist
-COPY --from=build /app/control-plane/package.json ./control-plane/package.json
+COPY --from=build --chown=autosploit:autosploit /app/node_modules ./node_modules
+COPY --from=build --chown=autosploit:autosploit /app/packages ./packages
+COPY --from=build --chown=autosploit:autosploit /app/control-plane/dist ./control-plane/dist
+COPY --from=build --chown=autosploit:autosploit /app/control-plane/package.json ./control-plane/package.json
+# Some bun-installed files land mode 0600/root-only; ensure the non-root runtime
+# user can read every module and traverse every dir (EACCES otherwise at import).
+RUN chmod -R a+rX /app
 USER autosploit
 
 # Default: start the HTTP control plane. The Nest app boots the BullMQ worker in
