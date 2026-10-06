@@ -16,7 +16,7 @@ COPY package.json bun.lock ./
 COPY turbo.json ./
 COPY packages/contracts ./packages/contracts
 COPY control-plane/package.json ./control-plane/package.json
-RUN bun install --frozen-lockfile --production=false
+RUN bun install --frozen-lockfile
 
 COPY packages ./packages
 COPY control-plane ./control-plane
