@@ -19,8 +19,9 @@ WORKDIR /app
 # node_modules/dist/.env/.git out of the context, so this stays slim and secret-free.
 COPY . .
 RUN bun install --frozen-lockfile
-# turbo build: @autosploit/contracts (tsc) then control-plane (nest build).
-RUN bun run --filter ./control-plane build
+# turbo build: @autosploit/contracts (tsc) then control-plane (nest build). turbo's
+# ^build dependsOn pulls in contracts; the filter skips the client workspace.
+RUN bunx turbo run build --filter=@autosploit/control-plane
 
 # ---------- Runtime stage ----------
 FROM node:22-slim AS runtime
