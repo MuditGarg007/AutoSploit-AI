@@ -55,7 +55,7 @@ jobs:
             -f control-plane/Dockerfile -t $IMAGE:scan .
 
       - name: Scan image (Trivy) — fail on high/critical
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.24.0
         with:
           image-ref: $IMAGE:scan
           severity: HIGH,CRITICAL
@@ -112,7 +112,7 @@ jobs:
             -t $HARNESS_IMAGE:scan ./harness
 
       - name: Scan image (Trivy) — fail on high/critical
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.24.0
         with:
           image-ref: $HARNESS_IMAGE:scan
           severity: HIGH,CRITICAL
@@ -148,7 +148,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: 1.1.0 }
+        with: { bun-version: 1.4.0 }
       - name: Install kind
         run: |
           curl -Lo kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
