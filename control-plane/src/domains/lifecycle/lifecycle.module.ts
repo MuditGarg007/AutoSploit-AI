@@ -1,4 +1,4 @@
-import { Injectable, Module, OnApplicationShutdown } from '@nestjs/common';
+import { Inject, Injectable, Module, OnApplicationShutdown } from '@nestjs/common';
 import { Worker } from 'bullmq';
 import { EnvService } from '../../config/env.service.js';
 import { IdentityModule } from '../identity/identity.module.js';
@@ -15,7 +15,9 @@ import { engagementQueueProvider } from './queue/engagement-queue.js';
 // (mirrors DrizzlePoolShutdown in db/drizzle.module.ts).
 @Injectable()
 export class EngagementWorkerLifecycle implements OnApplicationShutdown {
-  constructor(private readonly worker: Worker | null) {}
+  // `Worker | null` is a union, so emitDecoratorMetadata reflects `Object` and
+  // Nest cannot resolve the token by type; inject the Worker provider explicitly.
+  constructor(@Inject(Worker) private readonly worker: Worker | null) {}
 
   async onApplicationShutdown(): Promise<void> {
     await this.worker?.close();

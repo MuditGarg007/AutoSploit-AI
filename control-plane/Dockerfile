@@ -12,16 +12,16 @@
 # ---------- Build stage ----------
 FROM oven/bun:1.1.0 AS build
 WORKDIR /app
-COPY package.json bun.lock ./
-COPY turbo.json ./
-COPY packages/contracts ./packages/contracts
-COPY control-plane/package.json ./control-plane/package.json
-RUN bun install --frozen-lockfile --production=false
-
-COPY packages ./packages
-COPY control-plane ./control-plane
-# turbo build: @autosploit/contracts (tsc) then control-plane (nest build).
-RUN bun run --filter ./control-plane build
+# Copy the whole workspace before installing. bun.lock resolves against the full
+# workspace graph (client + control-plane + packages/*), so a frozen install needs
+# every workspace's package.json present; a partial copy resolves a different graph
+# and fails with "lockfile had changes, but lockfile is frozen". .dockerignore keeps
+# node_modules/dist/.env/.git out of the context, so this stays slim and secret-free.
+COPY . .
+RUN bun install --frozen-lockfile
+# turbo build: @autosploit/contracts (tsc) then control-plane (nest build). turbo's
+# ^build dependsOn pulls in contracts; the filter skips the client workspace.
+RUN bunx turbo run build --filter=@autosploit/control-plane
 
 # ---------- Runtime stage ----------
 FROM node:22-slim AS runtime
@@ -29,10 +29,13 @@ ENV NODE_ENV=production
 # Non-root runtime user (image hardening, §8.1).
 RUN groupadd -r autosploit && useradd -r -g autosploit -m autosploit
 WORKDIR /app
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages ./packages
-COPY --from=build /app/control-plane/dist ./control-plane/dist
-COPY --from=build /app/control-plane/package.json ./control-plane/package.json
+COPY --from=build --chown=autosploit:autosploit /app/node_modules ./node_modules
+COPY --from=build --chown=autosploit:autosploit /app/packages ./packages
+COPY --from=build --chown=autosploit:autosploit /app/control-plane/dist ./control-plane/dist
+COPY --from=build --chown=autosploit:autosploit /app/control-plane/package.json ./control-plane/package.json
+# Some bun-installed files land mode 0600/root-only; ensure the non-root runtime
+# user can read every module and traverse every dir (EACCES otherwise at import).
+RUN chmod -R a+rX /app
 USER autosploit
 
 # Default: start the HTTP control plane. The Nest app boots the BullMQ worker in

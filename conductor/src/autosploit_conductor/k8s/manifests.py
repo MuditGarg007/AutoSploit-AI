@@ -134,7 +134,7 @@ NAMESPACE_LABEL = "k8s:io.kubernetes.pod.namespace"
 
 # The model API allowed by FQDN. A tuple so a mirror/proxy host can be added
 # without widening to a CIDR.
-MODEL_API_FQDNS = ("api.openrouter.ai",)
+MODEL_API_FQDNS = ("openrouter.ai",)
 MODEL_API_PORT = 443
 
 # kube-dns: DNS must be explicitly allowed or a default-deny egress blocks name
@@ -145,10 +145,13 @@ DNS_SELECTOR = {"k8s-app": "kube-dns"}
 DNS_PORT = 53
 
 # The control-plane ingest endpoint (SEAM-1's third allowed edge). Defaults match
-# the deploy: the control-plane Service in the control-plane namespace, on 80.
+# the deploy: the control-plane in the control-plane namespace. The port is the
+# pod's CONTAINER port (3000), not the Service port (80): this is a `toEndpoints`
+# rule, and Cilium enforces egress against the backend endpoint after socket-LB
+# translates the Service VIP, so allowing 80 here never matches the :3000 backend.
 CONTROL_PLANE_NAMESPACE = "autosploit-system"
 CONTROL_PLANE_SELECTOR = {"app": "control-plane"}
-CONTROL_PLANE_PORT = 80
+CONTROL_PLANE_PORT = 3000
 
 
 def namespace_name(engagement_id: str) -> str:

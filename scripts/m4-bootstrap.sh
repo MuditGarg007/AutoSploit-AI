@@ -12,6 +12,13 @@
 #     /usr/local/bin/containerd-shim-runsc-v1  (download the release
 #     gvisor.tar.bz2 for your arch, verify the .sha512, extract `runsc` and
 #     `containerd-shim-runsc-v1`, `sudo install -m0755` both into /usr/local/bin).
+#     Release-2026xx runsc ALSO needs its sidecar dir (gvisor_sentry etc): the
+#     apt `runsc` package ships it as /usr/bin/gvisor-bin/ — stage it alongside
+#     runsc with `cp -a /usr/bin/gvisor-bin /usr/local/bin/gvisor-bin`, or the
+#     gVisor sandbox fails to start ("sidecar gvisor_sentry not usable",
+#     --sidecar-usage-policy=STRICT). deploy/kind/hardening-cluster.yaml mounts
+#     that dir into the node. (The `latest/<arch>` direct-download path 404s as of
+#     2026-10; the GPG-signed apt repo at storage.googleapis.com/gvisor is current.)
 #
 # Usage:
 #   ./scripts/m4-bootstrap.sh [--smoke] [--keep] [--delete]

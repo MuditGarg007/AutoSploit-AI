@@ -271,12 +271,12 @@ def test_network_policy_allows_target_any_port_same_engagement():
 def test_network_policy_allows_model_api_by_fqdn_on_443_only():
     np = m.network_policy_manifest(ID)
     model = next(r for r in _egress_rules(np) if "toFQDNs" in r)
-    assert model["toFQDNs"] == [{"matchName": "api.openrouter.ai"}]
+    assert model["toFQDNs"] == [{"matchName": "openrouter.ai"}]
     port = model["toPorts"][0]["ports"][0]
     assert port == {"port": "443", "protocol": "TCP"}
 
 
-def test_network_policy_allows_control_plane_ingest_on_80_only():
+def test_network_policy_allows_control_plane_ingest_on_backend_port_only():
     np = m.network_policy_manifest(ID)
     cp = next(
         r
@@ -288,7 +288,7 @@ def test_network_policy_allows_control_plane_ingest_on_80_only():
     labels = cp["toEndpoints"][0]["matchLabels"]
     assert labels["k8s:io.kubernetes.pod.namespace"] == "autosploit-system"
     port = cp["toPorts"][0]["ports"][0]
-    assert port == {"port": "80", "protocol": "TCP"}
+    assert port == {"port": "3000", "protocol": "TCP"}
 
 
 def test_network_policy_allows_build_to_registry_on_5000_only():

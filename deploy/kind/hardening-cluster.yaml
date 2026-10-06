@@ -18,3 +18,11 @@ nodes:
         containerPath: /usr/local/bin/runsc
       - hostPath: /usr/local/bin/containerd-shim-runsc-v1
         containerPath: /usr/local/bin/containerd-shim-runsc-v1
+      # gVisor sidecar binaries (gvisor_sentry etc). The release-2026xx runsc
+      # resolves these relative to its own path (/usr/local/bin/gvisor-bin/) and
+      # refuses to start the sandbox without them under
+      # --sidecar-usage-policy=STRICT ("sidecar gvisor_sentry not usable"). The
+      # apt `runsc` package installs them as /usr/bin/gvisor-bin/; stage that dir
+      # at /usr/local/bin/gvisor-bin before bootstrap (see m4-bootstrap.sh header).
+      - hostPath: /usr/local/bin/gvisor-bin
+        containerPath: /usr/local/bin/gvisor-bin
