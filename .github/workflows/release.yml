@@ -54,15 +54,20 @@ jobs:
           docker buildx build --platform linux/amd64 --load \
             -f control-plane/Dockerfile -t $IMAGE:scan .
 
-      - name: Leak scan (model key must never be in the image)
+      - name: Leak scan (model key value must never be in the image)
         run: |
+          # Match the key VALUE shape, not the env-var NAME: the control-plane dist/
+          # ships source comments that legitimately mention OPENROUTER_API_KEY to
+          # document that the key is deliberately absent (the conductor resolves it,
+          # §6). Grepping the name flags those comments; grep the sk-or- value shape
+          # instead, same as the harness leak scan.
           docker run --rm --entrypoint sh $IMAGE:scan -c \
-            'grep -rIs "OPENROUTER_API_KEY" / 2>/dev/null | grep -v "^Binary" || true' \
+            'grep -rIsE "sk-or-[A-Za-z0-9-]{8,}" / 2>/dev/null | grep -v "^Binary" || true' \
             | tee /tmp/leaks.txt
           if [ -s /tmp/leaks.txt ]; then
-            echo "❌ Image leak scan found references:"; cat /tmp/leaks.txt; exit 1
+            echo "❌ Image leak scan found model-key values:"; cat /tmp/leaks.txt; exit 1
           fi
-          echo "✅ no OPENROUTER_API_KEY reference in image"
+          echo "✅ no OPENROUTER model-key value in image"
 
       - name: Build and push multi-arch manifest (amd64 + arm64)
         run: |
