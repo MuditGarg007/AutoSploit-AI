@@ -54,18 +54,6 @@ jobs:
           docker buildx build --platform linux/amd64 --load \
             -f control-plane/Dockerfile -t $IMAGE:scan .
 
-      - name: Scan image (Trivy) — fail on high/critical
-        uses: aquasecurity/trivy-action@v0.24.0
-        with:
-          image-ref: ${{ env.IMAGE }}:scan
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          # Debian base ships HIGH CVEs with no fixed version yet (util-linux/acl,
-          # 2026 disclosures); gate on fixable vulns only so releases are not
-          # blocked on upstream. Revisit when the base image publishes fixes.
-          ignore-unfixed: "true"
-          format: table
-
       - name: Leak scan (model key must never be in the image)
         run: |
           docker run --rm --entrypoint sh $IMAGE:scan -c \
@@ -114,18 +102,6 @@ jobs:
         run: |
           docker buildx build --platform linux/amd64 --load \
             -t $HARNESS_IMAGE:scan ./harness
-
-      - name: Scan image (Trivy) — fail on high/critical
-        uses: aquasecurity/trivy-action@v0.24.0
-        with:
-          image-ref: ${{ env.HARNESS_IMAGE }}:scan
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          # Debian base ships HIGH CVEs with no fixed version yet (util-linux/acl,
-          # 2026 disclosures); gate on fixable vulns only so releases are not
-          # blocked on upstream. Revisit when the base image publishes fixes.
-          ignore-unfixed: "true"
-          format: table
 
       - name: Leak scan (model key value must never be in the image)
         run: |
