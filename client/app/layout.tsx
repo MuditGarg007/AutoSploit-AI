@@ -11,7 +11,12 @@ const geistSans = Geist({
 // Base URL for absolute metadata URLs (OpenGraph, Twitter, canonical). Set
 // NEXT_PUBLIC_SITE_URL to the production origin at deploy time (Phase 3). The
 // localhost fallback keeps local builds from erroring on relative image paths.
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+// A bare domain (no scheme) is tolerated: new URL() needs a protocol, so https
+// is assumed when one is missing.
+const rawSiteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+const siteUrl = /^https?:\/\//.test(rawSiteUrl)
+  ? rawSiteUrl
+  : `https://${rawSiteUrl}`;
 
 const title = "AutoSploit AI: autonomous red-team";
 const description =
