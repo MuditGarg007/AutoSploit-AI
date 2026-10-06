@@ -30,6 +30,12 @@ RUN bunx turbo run build --filter=@autosploit/control-plane
 # ---------- Runtime stage ----------
 FROM node:22-slim AS runtime
 ENV NODE_ENV=production
+# Patch OS packages: the node:22-slim (Debian bookworm) base lags its distro's
+# security updates, so Trivy flags fixable HIGH/CRITICAL OS CVEs (e.g. perl-base,
+# util-linux). Upgrade in place and drop the apt lists to keep the layer slim and
+# secret-free. Runs as root — must precede the USER switch below.
+RUN apt-get update && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
 # Non-root runtime user (image hardening, §8.1).
 RUN groupadd -r autosploit && useradd -r -g autosploit -m autosploit
 WORKDIR /app
