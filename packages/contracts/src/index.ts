@@ -2,7 +2,7 @@
 // Regenerate via `bun run generate` (or `bun run generate` in packages/contracts).
 // Source of truth: harness/src/autosploit_harness/contracts/ (harness.md §9 step 5).
 
-export const CONTRACT_VERSION = '1.0.0';
+export const CONTRACT_VERSION = '1.1.0';
 
 export { eventSchema } from './event-schema.js';
 
