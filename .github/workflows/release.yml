@@ -19,8 +19,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ghcr.io/${{ github.repository_owner }}/control-plane
-  HARNESS_IMAGE: ghcr.io/${{ github.repository_owner }}/harness
+  IMAGE: ghcr.io/muditgarg007/control-plane
+  HARNESS_IMAGE: ghcr.io/muditgarg007/harness
   GKE_CLUSTER: autosploit-demo
   GKE_REGION: us-central1
 
