@@ -143,7 +143,17 @@ jobs:
           curl -Lo kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
           chmod +x kind && sudo mv kind /usr/local/bin/
       - name: Create cluster
-        run: kind create cluster --name autosploit-cicd
+        run: |
+          kind create cluster --name autosploit-cicd
+          # kind returns once the API server answers, but the ServiceAccount
+          # controller may not have created the default/default SA yet. The
+          # red-team probe pod defaults to that SA, and pod admission is rejected
+          # with "serviceaccount default not found" until it exists. Wait for it.
+          for i in $(seq 1 30); do
+            kubectl -n default get serviceaccount default >/dev/null 2>&1 && break
+            echo "waiting for default serviceaccount ($i)…"; sleep 2
+          done
+          kubectl -n default get serviceaccount default
       - name: Reduced red-team pass
         run: ./scripts/redteam.sh --namespace default --ingest-token "${{ secrets.INGEST_TOKEN_SIGNING_KEY }}"
 
