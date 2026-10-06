@@ -4,6 +4,7 @@
 // Transparent over the hero; liquid-glass surface fades in on scroll.
 
 import Link from "next/link";
+import Image from "next/image";
 import { useEffect, useState } from "react";
 // Core 3 removed <SignedIn>/<SignedOut>; the replacement is <Show when=...>.
 import { Show, SignOutButton } from "@clerk/nextjs";
@@ -34,9 +35,16 @@ export default function Navbar() {
     >
       <nav className="mx-auto flex w-full max-w-7xl items-center gap-2 px-4 py-3 sm:px-6">
         {/* brand */}
-        <span className="mr-2 text-sm font-semibold tracking-tight text-text">
-          AutoSploit <span className="text-accent-bright">AI</span>
-        </span>
+        <Link href="/" className="mr-2" aria-label="AutoSploit AI">
+          <Image
+            src="/logo.png"
+            alt="AutoSploit AI"
+            width={1323}
+            height={213}
+            priority
+            className="h-6 w-auto"
+          />
+        </Link>
 
         {/* links */}
         <div className="hidden items-center gap-1 sm:flex">

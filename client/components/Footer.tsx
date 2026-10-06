@@ -1,4 +1,6 @@
-// Quiet footer. Plain text wordmark (no logo glyph), hairline top border.
+// Quiet footer. Image wordmark logo, hairline top border.
+
+import Image from "next/image";
 
 const COLS = [
   {
@@ -20,9 +22,13 @@ export default function Footer() {
     <footer className="border-t border-white/10 px-6 py-16">
       <div className="mx-auto grid w-full max-w-5xl gap-12 sm:grid-cols-[1.4fr_repeat(3,1fr)]">
         <div>
-          <span className="text-sm font-semibold tracking-tight text-text">
-            AutoSploit <span className="text-accent-bright">AI</span>
-          </span>
+          <Image
+            src="/logo.png"
+            alt="AutoSploit AI"
+            width={1323}
+            height={213}
+            className="h-6 w-auto"
+          />
           <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted">
             Autonomous red-team engagements that run isolated and clean up after
             themselves.

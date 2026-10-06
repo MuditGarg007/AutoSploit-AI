@@ -68,6 +68,27 @@ body {
   color: #fff;
 }
 
+/* Keyboard focus: a single quiet accent ring. Mouse clicks stay clean because
+   :focus-visible only shows for keyboard/AT navigation. */
+:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Respect the OS reduced-motion setting everywhere (a11y + perf). MicroSlats
+   also reads this flag directly to stop its canvas animation. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* thin, quiet scrollbar in the accent family */
 ::-webkit-scrollbar {
   width: 10px;

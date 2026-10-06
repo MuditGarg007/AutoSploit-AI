@@ -3,14 +3,26 @@
 // blur, no gradient. The search is a visual affordance for now; wiring it to the
 // command palette is a later pass, so it is a plain styled control.
 
-import { Show, SignOutButton } from "@clerk/nextjs";
+import { Show } from "@clerk/nextjs";
 import Link from "next/link";
-import { SearchIcon } from "./icons";
+import { SearchIcon, MenuIcon } from "./icons";
 
-export default function Topbar() {
+export default function Topbar({ onMenu }: { onMenu?: () => void }) {
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center border-b border-white/10 bg-canvas/95 px-6 backdrop-blur-[2px]">
-      <div className="mx-auto w-full max-w-md">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-white/10 bg-canvas/95 px-4 backdrop-blur-[2px] sm:px-6">
+      {/* Opens the nav drawer on mobile; the fixed rail makes it redundant on lg. */}
+      <button
+        type="button"
+        aria-label="Open navigation"
+        onClick={onMenu}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-white/5 hover:text-text lg:hidden"
+      >
+        <MenuIcon size={18} />
+      </button>
+
+      {/* Placeholder search. Hidden on the narrowest screens to keep the bar
+          uncluttered next to the menu button. */}
+      <div className="mx-auto hidden w-full max-w-md sm:block">
         <button
           type="button"
           className="flex h-9 w-full items-center gap-2 rounded-md border border-white/10 bg-surface px-3 text-sm text-faint transition-colors hover:border-border-strong"
@@ -21,7 +33,9 @@ export default function Topbar() {
         </button>
       </div>
 
-      <div className="absolute right-6 flex items-center gap-2">
+      {/* Sign out now lives in the sidebar user card. Only the signed-out log-in
+          affordance remains here. */}
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         <Show when="signed-out">
           <Link
             href="/login"
@@ -29,16 +43,6 @@ export default function Topbar() {
           >
             Log in
           </Link>
-        </Show>
-        <Show when="signed-in">
-          <SignOutButton redirectUrl="/">
-            <button
-              type="button"
-              className="flex h-9 items-center rounded-md px-3 text-sm text-muted transition-colors hover:bg-white/5 hover:text-text active:scale-[0.99]"
-            >
-              Sign out
-            </button>
-          </SignOutButton>
         </Show>
       </div>
     </header>

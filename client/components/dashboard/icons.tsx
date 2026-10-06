@@ -17,12 +17,15 @@ import {
   DollarSign,
   LayoutGrid,
   Loader2,
+  LogOut,
+  Menu,
   Plus,
   Search,
   Settings,
   Shield,
   ShieldCheck,
   Target,
+  User,
   Wrench,
   X,
   type LucideIcon,
@@ -57,7 +60,10 @@ export const ActivityIcon = icon(Activity);
 export const ShieldIcon = icon(Shield);
 export const BookIcon = icon(BookOpen);
 export const SettingsIcon = icon(Settings);
+export const UserIcon = icon(User);
+export const LogOutIcon = icon(LogOut);
 export const SearchIcon = icon(Search);
+export const MenuIcon = icon(Menu);
 export const PlusIcon = icon(Plus);
 export const ChevronRightIcon = icon(ChevronRight);
 export const ArrowLeftIcon = icon(ArrowLeft);

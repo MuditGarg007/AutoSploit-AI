@@ -6,6 +6,7 @@
 
 import { Suspense, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 // Classic resource-based hooks. Clerk v7 (Core 3) moved these to the /legacy
 // subpath; the default @clerk/nextjs export is now the new signals API.
@@ -195,16 +196,14 @@ function LoginPanel() {
       {/* left: auth panel */}
       <div className="flex w-full flex-col justify-center px-6 lg:w-3/5 lg:px-16">
         <div className="mx-auto w-full max-w-sm">
-          <span className="text-sm font-semibold tracking-tight text-text">
-            AutoSploit
-            <span
-              className="bg-clip-text text-transparent"
-              style={{ backgroundImage: ACCENT_GRADIENT }}
-            >
-              {" "}
-              AI
-            </span>
-          </span>
+          <Image
+            src="/logo.png"
+            alt="AutoSploit AI"
+            width={1323}
+            height={213}
+            priority
+            className="h-7 w-auto"
+          />
 
           {pendingVerification ? (
             <>

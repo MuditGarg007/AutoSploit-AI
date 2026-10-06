@@ -121,6 +121,7 @@ export default function NewEngagementForm() {
             <button
               key={r.id}
               type="button"
+              aria-pressed={isSel}
               onClick={() => pick(r.id)}
               disabled={submitting}
               className={cn(
