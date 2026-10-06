@@ -1,6 +1,6 @@
 # Isolation Hardening — Roadmap (Step 3)
 
-> **Status: in progress (updated 2026-09-28).** Done: M4, M5, M6, M7, M8, M9. M7
+> **Status: step 3 CLOSED (updated 2026-10-06).** Done: M4, M5, M6, M7, M8, M9, **H3**. M7
 > enforcement proven live on kind (its two internet-dependent SEAM-1 assertions ride
 > the H3 online run); M8 Kaniko in-cluster build proven live on kind; M5 closed its
 > external clone/base ingestion — the conductor now clones repo-side and mirrors bases
@@ -9,7 +9,9 @@
 > placeholder); M9 engagement Helm chart proven live on kind (`scripts/m9-proof.sh`),
 > with the namespace/netpol/secret kept imperative and fail-closed ahead of the release
 > — see the M9 section.
-> Open: H3 (M6a is now DONE — `CONTRACT_VERSION` bumped to 1.1.0). Execution roadmap
+> H3 is now DONE (see its section — red-team GREEN under live egress on the self-hosted
+> Contabo box; the GKE framing below is superseded by the self-hosted isolation-provider
+> decision). M6a DONE (`CONTRACT_VERSION` bumped to 1.1.0). Execution roadmap
 > for build-order step 3
 > (`overview.md §6`): move engagement execution off plain local Docker onto a
 > hardened Kubernetes substrate so untrusted user repos run safely isolated. This is
@@ -269,14 +271,21 @@ the §9 Phase B build order (steps 4–9) so the two docs line up.
   untrusted chart-values path. So the split is deliberate: imperative security
   scaffold first, then Helm for the workload.
 
-### H3 — Exit gate: red-team green on real GKE
+### H3 — Exit gate: red-team green under live egress — DONE 2026-10-06
 
-- **Work:** run `scripts/redteam.sh` (SEAM-1 egress matrix, SEAM-2 secret split)
-  against a **live GKE deploy** with the real NetworkPolicy in place. The script and
-  the `release.yml` GKE step already exist; this is the first green run against a
-  real cluster.
-- **Exit:** `redteam.sh` passes on GKE. **This closes step 3.**
-- **Depends on:** M6–M9, plus `deploy/terraform` GKE stand-up.
+- **Done:** `scripts/redteam.sh` RED-TEAM PASS GREEN against the real
+  CiliumNetworkPolicy under **live egress** on the self-hosted Contabo VPS (kind,
+  Cilium 1.21.0-pre.2) — SEAM-1 egress matrix (3 ALLOW edges, DENY set zero) and
+  SEAM-2 secret split both enforced. The run was on self-hosted K8s (the decided
+  isolation provider), not GKE; the original GKE framing is superseded.
+- **Two latent policy bugs fixed to get here** (never caught because the policy was
+  never run under live egress): `MODEL_API_FQDNS` pinned the NXDOMAIN
+  `api.openrouter.ai` instead of the real `openrouter.ai` the harness dials; and
+  `CONTROL_PLANE_PORT` was the Service port 80 instead of the backend pod port 3000
+  that Cilium `toEndpoints` actually enforces.
+- **Exit:** `redteam.sh` green under live egress. **This closed step 3.**
+- **Remaining cadence (not blocking):** the full GKE §7 pass as a per-release gate
+  (H-Q1) still stands as a cadence item, separate from step-3 closure.
 
 ---
 
@@ -336,13 +345,12 @@ them distinct in code and review.
 
 ## 7. First move
 
-**M4–M9 and M6a are all done** (see their milestones). One item remains before H3
-closes step 3:
+**M4–M9, M6a, and H3 are all done** (see their milestones). **Step 3 is CLOSED.**
 
-1. **H3 — the exit gate.** Stand up the `deploy/terraform` GKE cluster and run
-   `scripts/redteam.sh` green against the real NetworkPolicy. This is the critical
-   remaining work and absorbs the three M7 SEAM-1 assertions deferred for want of an
-   online cluster. **This closes step 3.**
+1. **H3 — the exit gate — DONE 2026-10-06.** `scripts/redteam.sh` ran green against
+   the real CiliumNetworkPolicy under live egress on the self-hosted Contabo box,
+   absorbing the three M7 SEAM-1 assertions that were deferred for want of an online
+   cluster. **This closed step 3.** (Self-hosted K8s, the decided provider — not GKE.)
 
 > Original first move (M4), now complete: local kind cluster + Cilium CNI + gVisor
 > `RuntimeClass`, then cut the conductor over from subprocess to the `kubernetes`

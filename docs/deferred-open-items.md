@@ -72,9 +72,12 @@ not pending:
    in-cluster build, **gVisor** `RuntimeClass`, **Cilium** default-deny **NetworkPolicy**,
    conductor as a real `kubernetes` client. Isolation-provider decision settled (self-hosted
    K8s + gVisor, above); the release path and red-team script above are already in place.
-2. **H3 exit gate — prove `redteam.sh` green on a real GKE deploy.** The script and the
-   `release.yml` GKE step exist but the pass has not been run green against a live GKE
-   cluster with the real NetworkPolicy. That green run is the exit-gate milestone.
+2. **~~H3 exit gate — prove `redteam.sh` green.~~ DONE 2026-10-06.** Ran green against
+   the real CiliumNetworkPolicy under live egress on the self-hosted Contabo VPS (kind,
+   Cilium 1.21.0-pre.2) — SEAM-1 egress matrix + SEAM-2 secret split both enforced; two
+   latent policy bugs fixed (NXDOMAIN model FQDN `api.openrouter.ai`→`openrouter.ai`; plane
+   port 80→backend 3000 for Cilium `toEndpoints`). Self-hosted, not GKE (the decided
+   provider). **Step 3 closed.** The full GKE §7 pass remains as a per-release cadence (H-Q1).
 3. **Step 4 — Orchestration at scale.** Job controller, per-engagement teardown, and
    quota under real load. Turns the demo into a platform.
 

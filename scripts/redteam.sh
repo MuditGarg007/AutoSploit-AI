@@ -23,7 +23,7 @@ PLANE_NS="${PLANE_NS:-default}"
 INGEST_TOKEN="${INGEST_TOKEN:-}"
 PAYLOAD_POD="${PAYLOAD_POD:-redteam-probe}"
 TARGET_SVC="${TARGET_SVC:-target}"
-MODEL_HOST="${MODEL_HOST:-api.openrouter.ai}"
+MODEL_HOST="${MODEL_HOST:-openrouter.ai}"
 INGEST_URL="${INGEST_URL:-http://control-plane:80/engagements/demo/events}"
 DENY_PORTS=(5432 6379 9092) # Postgres / Redis / Redpanda — must be denied
 
