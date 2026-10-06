@@ -7,6 +7,11 @@ image:
   repository: ghcr.io/autosploit/control-plane
   tag: latest
   pullPolicy: IfNotPresent
+  # imagePullSecrets for a private GHCR package. Each entry is {name: <secret>} where
+  # the secret is a docker-registry Secret (e.g. `kubectl create secret docker-registry
+  # ghcr-pull ...`). Empty when the package is public. Set per deploy, e.g.
+  # `--set image.pullSecrets[0].name=ghcr-pull`.
+  pullSecrets: []
 
 # Optional override for the generated resource name (default: <release>-control-plane).
 fullnameOverride: ""

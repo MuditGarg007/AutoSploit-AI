@@ -18,6 +18,12 @@ spec:
       labels:
         app.kubernetes.io/name: {{ .Chart.Name }}
         app.kubernetes.io/component: app
+        # SEAM-1 edge 4: the engagement CiliumNetworkPolicy allows attacker egress to
+        # the control plane by matching pods labelled `app: control-plane` in this
+        # namespace (conductor k8s/manifests.py CONTROL_PLANE_SELECTOR). This is a pod
+        # label only — the Deployment selector deliberately stays on the app.kubernetes.io
+        # keys so it is unaffected.
+        app: control-plane
       annotations:
         {{- with .Values.serviceMonitor }}
         prometheus.io/scrape: "true"
@@ -26,6 +32,12 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "control-plane.serviceAccountName" . }}
+      {{- with .Values.image.pullSecrets }}
+      # Private GHCR pull (CI pushes ghcr.io/<owner>/control-plane private). Each entry
+      # is {name: <docker-registry secret>}; empty by default for public images.
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: control-plane
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

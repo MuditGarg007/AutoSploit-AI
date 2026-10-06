@@ -1,10 +1,18 @@
-# H3 on a Hostinger KVM2 VPS — Runbook
+# H3 on a single self-hosted KVM VPS — Runbook
 
-> **Status: ready to execute (2026-09-28).** This runbook closes the isolation-hardening
-> exit gate (H3) on a **single Hostinger KVM2 VPS (2 vCPU / 8 GB RAM / ~100 GB NVMe)**.
+> **Status: ready to execute (2026-09-28; Contabo-adapted 2026-10-06).** This runbook
+> closes the isolation-hardening exit gate (H3) on a **single self-hosted KVM VPS**.
 > H3 = `scripts/redteam.sh` green against the real CiliumNetworkPolicy under live egress.
 > It is the companion to `isolation-hardening-roadmap.md` (H3 milestone); the roadmap
 > stays the authority for *why* each seam is shaped the way it is.
+>
+> **Substrate flavours this runbook covers:**
+> - Original reference box: **Hostinger KVM2 (2 vCPU / 8 GB / ~100 GB NVMe)**.
+> - Execution box (2026-10-06): **Contabo VPS (4 vCPU / 8 GB)**. Only two things differ
+>   from the reference: (a) **two extra cores** — Kaniko/target builds are faster, but the
+>   8 GB RAM is still the bottleneck, so **concurrency stays 1**; (b) Contabo sells both
+>   **KVM** and legacy **OpenVZ/LXC** tiers — you must confirm KVM (§4.2). Everything else
+>   below is identical; "KVM2" in the text means "the KVM VPS" generically.
 
 Running self-hosted is consistent with the settled isolation decision
 (`deferred-open-items.md`: self-hosted K8s + gVisor, managed microVM rejected). GKE was
@@ -44,13 +52,18 @@ thing `redteam.sh` proves.
 These bound everything below. They are not optional caveats; the plan only fits because
 of them.
 
-- **2 vCPU is the real bottleneck**, not RAM. gVisor, Cilium eBPF, and Kaniko all share 2
-  cores. Builds are **slow but correct**. H3 itself is network-probe heavy with tiny Pods,
-  so it runs comfortably; heavy target builds are the only thing that crawls.
+- **CPU is the build bottleneck, RAM is the hard cap.** On the 2-vCPU reference box gVisor,
+  Cilium eBPF, and Kaniko share 2 cores and builds are **slow but correct**. On the
+  **Contabo 4-vCPU box the extra two cores roughly halve Kaniko build time**, but this
+  changes nothing about concurrency: the 8 GB RAM budget (§5/§6) still fits exactly one
+  engagement, so the cap stays **1**. H3 itself is network-probe heavy with tiny Pods, so it
+  runs comfortably on either box; heavy target builds are the only thing that ever crawls.
 - **One engagement at a time.** The RAM budget (§5) fits a single engagement burst. Keep
   the concurrency cap at **1** (already deferred as Q2 — do not raise it here).
 - **Virtualization must be KVM, not OpenVZ.** Hostinger KVM2 is KVM ✓ (full kernel,
-  loadable modules). OpenVZ cannot run kind/gVisor.
+  loadable modules). **Contabo sells both KVM and legacy OpenVZ/LXC tiers — confirm the
+  box is KVM** (`systemd-detect-virt` = `kvm`, §4.2) before anything else. OpenVZ/LXC
+  cannot run kind/gVisor.
 - **gVisor platform = `systrap`/`ptrace`.** The VPS is itself virtualized, so nested
   `/dev/kvm` is usually unavailable to `runsc`; it falls back to `systrap`, which needs no
   `/dev/kvm`. Works, just slower. Acceptable for the exit gate and MVP.
@@ -66,16 +79,22 @@ of them.
 
 ### 3.1 Terraform (`deploy/terraform/main.tf`)
 
-Hostinger has no first-class Terraform provider, so the VM is provisioned out-of-band
-(panel / cloud-init), not via `terraform apply`. Strip the GKE-specific resources:
+Neither Hostinger nor Contabo has a first-class Terraform provider, so the VM is
+provisioned out-of-band (panel / cloud-init), not via `terraform apply`.
 
-| Resource | Action |
-|----------|--------|
-| `google_container_cluster.autosploit` (Autopilot) | **Remove.** Cluster is created by `m4-bootstrap.sh` on the VPS. Also removes the Autopilot gVisor/CRD restriction. |
-| `google_storage_bucket.reports` | **Remove.** Replaced by Cloudflare R2 (§3.2). |
-| `google_service_account.ghcr_pull` | **Remove.** Use a plain `imagePullSecret` (§3.3). |
-| `google_service_account.plane` | **Remove.** No GCP workload identity on the VPS. |
-| `vault_*` (transit engine, key, policy, k8s-auth role) | **Keep, minimal.** Run Vault as a small container on the VPS, or use the bootstrap transit engine for the demo. |
+> **Already done (verified 2026-10-06):** `deploy/terraform/main.tf` is **already stripped**
+> to the self-hosted shape — providers are `vault` + `random` only (no `google`), and the
+> four GKE resources below are gone from the tree. This section is now a **no-op audit**;
+> the table records what the file should contain, which matches. (The roadmap line calling
+> `main.tf` "GKE Autopilot + Vault + registry" is stale against the actual file.)
+
+| Resource | Expected state |
+|----------|----------------|
+| `google_container_cluster.autosploit` (Autopilot) | **Absent ✓.** Cluster is created by `m4-bootstrap.sh` on the VPS. |
+| `google_storage_bucket.reports` | **Absent ✓.** Replaced by Cloudflare R2 (§3.2). |
+| `google_service_account.ghcr_pull` | **Absent ✓.** Use a plain `imagePullSecret` (§3.3). |
+| `google_service_account.plane` | **Absent ✓.** No GCP workload identity on the VPS. |
+| `vault_*` (transit engine, key, policy, k8s-auth role) | **Present, minimal ✓.** Run Vault as a small container on the VPS, or use the bootstrap transit engine for the demo. |
 
 ### 3.2 Report blobs → Cloudflare R2 (trim #2)
 
@@ -89,10 +108,17 @@ S3-protocol; Backblaze B2 is an equivalent fallback):
 
 ### 3.3 Image pull (GHCR)
 
-- Create a GHCR read-only PAT.
-- `kubectl create secret docker-registry ghcr-pull --docker-server=ghcr.io \
-  --docker-username=<user> --docker-password=<PAT>` in the control-plane namespace, and
-  reference it where the GKE workload-identity pull used to be.
+CI pushes both `ghcr.io/<owner>/control-plane` and `ghcr.io/<owner>/harness` to GHCR as
+**private** packages (`.github/workflows/release.yml`), so the VPS needs a pull secret:
+
+- Create a GHCR read-only PAT (`read:packages`).
+- `kubectl create secret docker-registry ghcr-pull -n autosploit-system \
+  --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT>` in the
+  **`autosploit-system`** namespace (where the control plane runs, §5.3).
+- Wire it at install with `--set image.pullSecrets[0].name=ghcr-pull` (the chart now
+  exposes `image.pullSecrets` and renders `imagePullSecrets` from it — the old
+  `--set image.pullSecret=…` was a no-op: wrong key, no template support).
+- Alternatively, make the GHCR packages **public** and skip the secret entirely.
 
 ---
 
@@ -169,13 +195,38 @@ until `--smoke` is green on the VPS.**
 
 ### 5.3 Deploy the control plane
 
+The control-plane chart ships **only** the plane Deployment + Service; it deliberately does
+**not** ship Postgres / Redis / Redpanda / Vault / S3 (`values.yaml` `external.*` are
+endpoints you point at — ops owns the stateful deps). For H3 the plane must reach
+**Running + Ready** (readiness `/health`) so the SEAM-1 edge-4 Service has an endpoint, so
+stand those deps up first (minimal single replicas; Redpanda with reduced memory flags — it
+is the hungriest on 8 GB). Reports go to **Cloudflare R2** (§3.2), an S3-protocol config swap.
+
 ```bash
-kubectl create secret docker-registry ghcr-pull ...      # §3.3
-helm install control-plane deploy/helm/control-plane/ \
-  --set image.pullSecret=ghcr-pull \
-  --set reports.s3.endpoint=https://<accountid>.r2.cloudflarestorage.com \
-  # ...R2 creds, Vault addr, OPENROUTER_API_KEY wiring per control-plane.md
+kubectl create namespace autosploit-system
+kubectl create secret docker-registry ghcr-pull -n autosploit-system \
+  --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT>   # §3.3
+# control-plane-secrets: INGEST_TOKEN_SIGNING_KEY, JWT_*, GITHUB_* OAuth, VAULT_TRANSIT_KEY
+# — NEVER OPENROUTER_API_KEY (chart forbids it; CI leak scanner guards it).
+kubectl create secret generic control-plane-secrets -n autosploit-system --from-literal=...
+
+helm install control-plane deploy/helm/control-plane/ -n autosploit-system \
+  --set image.pullSecrets[0].name=ghcr-pull \
+  --set external.s3Endpoint=https://<accountid>.r2.cloudflarestorage.com \
+  --set external.s3Bucket=autosploit-reports \
+  --set external.postgresUrl=postgres://... \
+  --set external.redisUrl=redis://... \
+  --set external.kafkaBrokers=... \
+  --set external.vaultAddr=http://vault:8200
+kubectl rollout status deploy/control-plane-control-plane-app -n autosploit-system
 ```
+
+> **Chart-key note (corrected 2026-10-06):** the S3 endpoint keys are `external.s3Endpoint`
+> / `external.s3Bucket` (**not** `reports.s3.*`), the pull-secret key is
+> `image.pullSecrets[0].name` (§3.3), and the plane lives in **`autosploit-system`** — that
+> namespace + the pod label `app: control-plane` are exactly what the engagement
+> CiliumNetworkPolicy's edge-4 ALLOW matches (`conductor .../k8s/manifests.py`). The chart
+> now sets that pod label; without it, SEAM-1's third edge cannot pass.
 
 Secrets stay on the trusted side per the invariant (`isolation-hardening-roadmap.md §6`):
 `OPENROUTER_API_KEY` conductor/harness-side only; the GitHub token provisioner-side
@@ -212,22 +263,33 @@ the VPS cluster.
 ### 7.1 Run an engagement to create the policed namespace
 
 ```bash
-conductor run <a-small-dockerfile-repo> --k8s
+conductor run <a-small-dockerfile-repo> --k8s --target-port <port>
 ```
 
-Use a **small** target Dockerfile for the first pass — remember the 2-vCPU Kaniko
-constraint (§2). This creates `engagement-<id>` with the CiliumNetworkPolicy applied
-fail-closed, before any Pod (§M7).
+`--k8s` requires `--target-port` (the port the built target serves on). Use a **small**
+target Dockerfile for the first pass — remember the Kaniko constraint (§2; the Contabo
+4-vCPU box builds faster but is still serialized). This creates `engagement-<id>` with the
+CiliumNetworkPolicy applied fail-closed, before any Pod (§M7).
 
 ### 7.2 Run the red-team pass
 
 ```bash
 ./scripts/redteam.sh \
   --namespace engagement-<id> \
-  --plane-ns default \
+  --plane-ns autosploit-system \
   --model-host api.openrouter.ai \
-  --ingest-url http://control-plane:80/engagements/<id>/events
+  --ingest-url http://control-plane-control-plane.autosploit-system.svc.cluster.local:80/engagements/<id>/events \
+  --ingest-token <token>
 ```
+
+> **Invocation note (corrected 2026-10-06):** three fixes vs. the original example —
+> (1) `--plane-ns autosploit-system` so the SEAM-2 model-key scan reads the real plane
+> logs where the plane actually runs (§5.3); (2) the ingest URL is the plane Service's
+> **full** cluster DNS name — the chart Service is `control-plane-control-plane` (release
+> + chart name), not `control-plane`, and the probe Pod is in the engagement namespace so
+> it needs the FQDN; (3) **`--ingest-token` is required to actually exercise edge 4** —
+> without a token `redteam.sh` skips the control-plane POST, leaving the third ALLOW edge
+> unproven (`redteam.sh` only probes it when a token is set).
 
 ### 7.3 Exit criterion — what must be green
 
@@ -266,16 +328,17 @@ down after. Same substrate, no new code.
 
 ## 9. Checklist
 
-- [ ] KVM confirmed (`systemd-detect-virt` = kvm); `/sys/kernel/btf/vmlinux` exists.
+- [ ] KVM confirmed (`systemd-detect-virt` = kvm — **Contabo: not OpenVZ/LXC**); `/sys/kernel/btf/vmlinux` exists.
+- [ ] Host egress left permissive (no Contabo panel firewall / ufw egress rule — would mask SEAM-1).
 - [ ] Docker + kind + kubectl + cilium + helm + gVisor binaries installed.
 - [ ] 6 GB swapfile added and in `/etc/fstab`.
-- [ ] `main.tf` stripped of GKE cluster + service accounts + GCS bucket; minimal Vault kept.
+- [ ] `main.tf` already stripped to minimal Vault (audit only — verified no `google` resources).
 - [ ] Cloudflare R2 bucket + creds; reports sink pointed at R2.
-- [ ] Harness image current in GHCR (built by CI, not the VPS); `ghcr-pull` secret created.
+- [ ] Both GHCR images (control-plane + harness) current in GHCR (built by CI, not the VPS); `ghcr-pull` secret created in `autosploit-system`.
 - [ ] Cilium version verified on the VPS kernel; VPS pin recorded.
 - [ ] `m4-bootstrap.sh --smoke` green on the VPS.
-- [ ] Control plane deployed via Helm; secrets wired per the trust split.
-- [ ] One engagement run under `--k8s` (small Dockerfile); policed namespace exists.
-- [ ] Concurrency held at 1.
+- [ ] Plane deps (Postgres/Redis/Redpanda/Vault) up in `autosploit-system`; control plane deployed via Helm there, `1/1 Running`, secrets wired per the trust split (no OPENROUTER_API_KEY in the plane).
+- [ ] One engagement run under `--k8s --target-port <port>` (small Dockerfile); policed namespace exists.
+- [ ] Concurrency held at 1 (Contabo's extra cores do not raise it — RAM-bound).
 - [ ] `redteam.sh` **green** — SEAM-1 + SEAM-2. **H3 closed, step 3 done.**
 - [ ] (Optional) `deploy-vps` CI job replaces `deploy-gke`.
