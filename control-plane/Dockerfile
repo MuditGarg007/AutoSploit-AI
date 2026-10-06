@@ -16,6 +16,10 @@ COPY package.json bun.lock ./
 COPY turbo.json ./
 COPY packages/contracts ./packages/contracts
 COPY control-plane/package.json ./control-plane/package.json
+# Root package.json declares `client` as a workspace, so its manifest must be
+# present for bun to resolve the full graph and satisfy the frozen lockfile,
+# even though the control-plane image never builds or ships the client.
+COPY client/package.json ./client/package.json
 RUN bun install --frozen-lockfile
 
 COPY packages ./packages
