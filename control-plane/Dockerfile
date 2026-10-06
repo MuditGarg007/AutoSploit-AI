@@ -12,18 +12,13 @@
 # ---------- Build stage ----------
 FROM oven/bun:1.1.0 AS build
 WORKDIR /app
-COPY package.json bun.lock ./
-COPY turbo.json ./
-COPY packages/contracts ./packages/contracts
-COPY control-plane/package.json ./control-plane/package.json
-# Root package.json declares `client` as a workspace, so its manifest must be
-# present for bun to resolve the full graph and satisfy the frozen lockfile,
-# even though the control-plane image never builds or ships the client.
-COPY client/package.json ./client/package.json
+# Copy the whole workspace before installing. bun.lock resolves against the full
+# workspace graph (client + control-plane + packages/*), so a frozen install needs
+# every workspace's package.json present; a partial copy resolves a different graph
+# and fails with "lockfile had changes, but lockfile is frozen". .dockerignore keeps
+# node_modules/dist/.env/.git out of the context, so this stays slim and secret-free.
+COPY . .
 RUN bun install --frozen-lockfile
-
-COPY packages ./packages
-COPY control-plane ./control-plane
 # turbo build: @autosploit/contracts (tsc) then control-plane (nest build).
 RUN bun run --filter ./control-plane build
 
