@@ -10,6 +10,8 @@
 // by a backdrop tap, a nav click, or Escape.
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 
@@ -19,6 +21,16 @@ export default function DashboardShell({
   children: React.ReactNode;
 }) {
   const [navOpen, setNavOpen] = useState(false);
+  const router = useRouter();
+  const { status } = useAuth();
+
+  // Route gate: Clerk's server middleware used to do this, but the session now
+  // lives in a browser token (lib/token), so the guard is client-side. Bounce
+  // signed-out users to /login. The mock/demo build reports a synthetic user, so
+  // this never fires there.
+  useEffect(() => {
+    if (status === "signed-out") router.replace("/login");
+  }, [status, router]);
 
   // Drawer closes on every nav click via Sidebar's onNavigate, plus the backdrop
   // and Escape below. No pathname effect needed.

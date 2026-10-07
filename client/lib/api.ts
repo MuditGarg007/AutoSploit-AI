@@ -21,8 +21,36 @@ import {
   type EngagementRow,
 } from "./mock-engagements";
 import { MOCK_REPOS, findRepo, type Repo } from "./mock-repos";
+import { getToken, refreshToken } from "./token";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+
+// Single fetch path to the control plane. Attaches the Bearer access token when
+// present (none on the server, where localStorage is absent — those reads fall
+// back to mock), includes credentials so the refresh cookie rides along, and on
+// a 401 tries one silent refresh then retries. Callers handle !ok themselves.
+async function authedFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const run = (token: string | null): Promise<Response> =>
+    fetch(`${API_BASE}${path}`, {
+      ...init,
+      credentials: "include",
+      headers: {
+        accept: "application/json",
+        ...(init.headers as Record<string, string> | undefined),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+  let res = await run(getToken());
+  if (res.status === 401) {
+    const next = await refreshToken();
+    if (next) res = await run(next);
+  }
+  return res;
+}
 
 // Thrown for a reachable backend that answered with a non-2xx. A network failure
 // (backend unreachable) does not throw this: reads fall back to mock, and create
@@ -72,10 +100,7 @@ function base(): string | undefined {
 // session). Throws ApiError on a non-2xx; lets a network error propagate so the
 // callers can distinguish "backend said no" from "no backend".
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    credentials: "include",
-    headers: { accept: "application/json" },
-  });
+  const res = await authedFetch(path);
   if (!res.ok) throw new ApiError(res.status, `GET ${path} -> ${res.status}`);
   return (await res.json()) as T;
 }
@@ -156,13 +181,9 @@ export async function createEngagement(input: {
   if (!base()) return { id: synthId() };
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}/engagements`, {
+    res = await authedFetch("/engagements", {
       method: "POST",
-      credentials: "include",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-      },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ repoId: input.repoId }),
     });
   } catch {
@@ -180,9 +201,9 @@ export async function createEngagement(input: {
 export async function abortEngagement(id: string): Promise<void> {
   if (!base()) return;
   try {
-    const res = await fetch(
-      `${API_BASE}/engagements/${encodeURIComponent(id)}/abort`,
-      { method: "POST", credentials: "include" },
+    const res = await authedFetch(
+      `/engagements/${encodeURIComponent(id)}/abort`,
+      { method: "POST" },
     );
     if (!res.ok) throw new ApiError(res.status, `POST abort -> ${res.status}`);
   } catch (e) {

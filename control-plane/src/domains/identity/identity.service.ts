@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { SignJWT } from 'jose';
 import { DRIZZLE, type Db } from '../../db/drizzle.module.js';
 import { EnvService } from '../../config/env.service.js';
@@ -22,8 +22,8 @@ export interface IssuedSession {
 
 // Sole writer of users / sessions / github_tokens (docs/control-plane.md §4.A).
 // Token writes go through VaultService first so only ciphertext reaches Postgres
-// (§12 gate A). Refresh tokens are stored as SHA-256 hashes so a sessions-table
-// leak never yields a usable token.
+// (§12 gate A). Refresh tokens are stored as keyed HMAC-SHA256 (peppered with
+// JWT_REFRESH_SECRET) so a sessions-table leak never yields a usable token.
 @Injectable()
 export class IdentityService {
   constructor(
@@ -78,22 +78,8 @@ export class IdentityService {
 
   async issueSession(userId: string): Promise<IssuedSession> {
     const sessionId = randomUUID();
-    const accessToken = await new SignJWT({
-      sub: userId,
-      sid: sessionId,
-      type: 'access',
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime(
-        Math.floor(Date.now() / 1000) + this.env.accessTokenTtlSec,
-      )
-      .sign(new TextEncoder().encode(this.env.jwtAccessSecret));
-
     const refreshToken = randomBytes(48).toString('base64url');
-    const expiresAt = new Date(
-      Date.now() + this.env.refreshTokenTtlSec * 1000,
-    );
+    const expiresAt = new Date(Date.now() + this.env.refreshTokenTtlSec * 1000);
 
     await this.db.insert(sessions).values({
       id: sessionId,
@@ -102,41 +88,81 @@ export class IdentityService {
       expiresAt,
     });
 
+    const accessToken = await this.mintAccessToken(userId, sessionId);
     const user = await this.getUserById(userId);
-    return {
-      accessToken,
-      refreshToken,
-      refreshExpiresAt: expiresAt,
-      user,
-    };
+    return { accessToken, refreshToken, refreshExpiresAt: expiresAt, user };
   }
 
-  // Rotating refresh tokens: consume the presented token, issue a new one, and
-  // stamp the row. A presented token that has already been rotated is a reuse →
-  // revoke the session (fail-closed).
-  async rotateRefresh(
-    presented: string,
-  ): Promise<IssuedSession | null> {
-    const hash = this.hash(presented);
-    const row = await this.db
+  // Rotating refresh tokens, rotated IN PLACE on a stable session row:
+  //   - presented matches the row's CURRENT hash  → rotate: mint a new access
+  //     token (same session id), generate a new refresh token, and overwrite
+  //     the row's current hash (demoting the old one to prev_refresh_token_hash).
+  //   - presented matches a row's PREV hash        → the token was already
+  //     rotated away and is being replayed. Treat as theft and revoke the whole
+  //     session (the token family), so neither the legitimate holder nor an
+  //     attacker keeps it (fail-closed).
+  //   - no match / expired                         → null (401).
+  // A client that retries a refresh with the same (now-superseded) token after a
+  // successful rotation therefore loses the session; that strictness is the
+  // intended reuse-detection tradeoff.
+  async rotateRefresh(presented: string): Promise<IssuedSession | null> {
+    const presentedHash = this.hash(presented);
+
+    const currentRows = await this.db
       .select()
       .from(sessions)
-      .where(and(eq(sessions.refreshTokenHash, hash)))
+      .where(eq(sessions.refreshTokenHash, presentedHash))
       .limit(1);
-
-    const session = row[0];
-    if (!session || session.expiresAt.getTime() < Date.now()) return null;
-    if (session.rotatedAt) {
-      await this.revokeSession(session.id);
-      return null;
+    const current = currentRows[0];
+    if (current) {
+      if (current.expiresAt.getTime() < Date.now()) {
+        await this.revokeSession(current.id);
+        return null;
+      }
+      const nextRefresh = randomBytes(48).toString('base64url');
+      const expiresAt = new Date(
+        Date.now() + this.env.refreshTokenTtlSec * 1000,
+      );
+      await this.db
+        .update(sessions)
+        .set({
+          prevRefreshTokenHash: current.refreshTokenHash,
+          refreshTokenHash: this.hash(nextRefresh),
+          rotatedAt: new Date(),
+          expiresAt,
+        })
+        .where(eq(sessions.id, current.id));
+      const accessToken = await this.mintAccessToken(
+        current.userId,
+        current.id,
+      );
+      const user = await this.getUserById(current.userId);
+      return {
+        accessToken,
+        refreshToken: nextRefresh,
+        refreshExpiresAt: expiresAt,
+        user,
+      };
     }
 
-    const next = await this.issueSession(session.userId);
-    await this.db
-      .update(sessions)
-      .set({ rotatedAt: new Date() })
-      .where(eq(sessions.id, session.id));
-    return next;
+    // Reuse of an already-rotated token → revoke the whole session family.
+    const reuseRows = await this.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.prevRefreshTokenHash, presentedHash))
+      .limit(1);
+    if (reuseRows[0]) await this.revokeSession(reuseRows[0].id);
+    return null;
+  }
+
+  private mintAccessToken(userId: string, sessionId: string): Promise<string> {
+    return new SignJWT({ sub: userId, sid: sessionId, type: 'access' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime(
+        Math.floor(Date.now() / 1000) + this.env.accessTokenTtlSec,
+      )
+      .sign(new TextEncoder().encode(this.env.jwtAccessSecret));
   }
 
   async revokeSession(sessionId: string): Promise<void> {
@@ -180,7 +206,12 @@ export class IdentityService {
     return { id: row.id, githubId: row.githubId, login: row.login };
   }
 
+  // Refresh tokens are stored as a keyed HMAC-SHA256, not a bare digest: the
+  // JWT_REFRESH_SECRET is the server-side pepper, so a sessions-table leak alone
+  // (without the secret) yields neither a usable token nor a lookup oracle.
   private hash(token: string): string {
-    return createHash('sha256').update(token).digest('hex');
+    return createHmac('sha256', this.env.jwtRefreshSecret)
+      .update(token)
+      .digest('hex');
   }
 }

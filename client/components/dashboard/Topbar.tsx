@@ -3,8 +3,6 @@
 // blur, no gradient. The search is a visual affordance for now; wiring it to the
 // command palette is a later pass, so it is a plain styled control.
 
-import { Show } from "@clerk/nextjs";
-import Link from "next/link";
 import { SearchIcon, MenuIcon } from "./icons";
 
 export default function Topbar({ onMenu }: { onMenu?: () => void }) {
@@ -33,18 +31,8 @@ export default function Topbar({ onMenu }: { onMenu?: () => void }) {
         </button>
       </div>
 
-      {/* Sign out now lives in the sidebar user card. Only the signed-out log-in
-          affordance remains here. */}
-      <div className="ml-auto flex shrink-0 items-center gap-2">
-        <Show when="signed-out">
-          <Link
-            href="/login"
-            className="flex h-9 items-center rounded-md px-3 text-sm text-muted transition-colors hover:bg-white/5 hover:text-text"
-          >
-            Log in
-          </Link>
-        </Show>
-      </div>
+      {/* Session controls (sign out) live in the sidebar user card. */}
+      <div className="ml-auto" />
     </header>
   );
 }

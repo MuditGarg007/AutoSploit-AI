@@ -15,10 +15,17 @@ export const sessions = pgTable('sessions', {
   userId: uuid('user_id')
     .notNull()
     .references(() => users.id),
+  // Keyed HMAC-SHA256 of the CURRENT (live) refresh token.
   refreshTokenHash: text('refresh_token_hash').notNull(),
+  // Keyed HMAC-SHA256 of the token this row's current one just replaced. A
+  // presented token matching THIS (not refresh_token_hash) is a replayed,
+  // already-rotated token → theft signal → the whole session (token family) is
+  // revoked. Null until the first rotation.
+  prevRefreshTokenHash: text('prev_refresh_token_hash'),
   expiresAt: timestamp('expires_at').notNull(),
-  // Rotation: each refresh use rotates the token and stamps this; a presented
-  // token whose hash matches a row with a NEWER rotated_at is a reuse → revoke.
+  // Rotation in place: the session id is stable for the login's lifetime; each
+  // refresh overwrites refresh_token_hash on THIS row (no new row per refresh)
+  // and stamps rotated_at with the last rotation time.
   rotatedAt: timestamp('rotated_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });

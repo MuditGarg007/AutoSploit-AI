@@ -22,6 +22,13 @@
       "when": 1787208342592,
       "tag": "0002_dark_harpoon",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791394041559,
+      "tag": "0003_boring_bucky",
+      "breakpoints": true
     }
   ]
 }

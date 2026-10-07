@@ -40,6 +40,17 @@ async function bootstrap(): Promise<void> {
     { logger },
   );
   await app.register(cookie);
+
+  // CORS for the browser frontend (Vercel). Credentialed cross-origin requests
+  // (the client sends Bearer + the refresh cookie) require an explicit origin
+  // allowlist — never '*' with credentials. Origins come from FRONTEND_URL.
+  app.enableCors({
+    origin: env.frontendUrls,
+    credentials: true,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['authorization', 'content-type', 'accept', 'last-event-id'],
+  });
+
   const port = Number(env.port ?? 3000);
   await app.listen(port, '0.0.0.0');
 }

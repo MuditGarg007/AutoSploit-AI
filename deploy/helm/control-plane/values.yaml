@@ -60,6 +60,10 @@ env:
   LOG_LEVEL: info
   PUBLIC_BASE_URL: http://control-plane
   OTEL_ENABLED: "false"
+  # Browser frontend origin(s) for the CORS allowlist + OAuth post-login redirect
+  # (comma-separated, no trailing slash). Override per deploy with
+  # `--set env.FRONTEND_URL=https://<your-vercel-origin>`.
+  FRONTEND_URL: http://localhost:3000
 
 # Reference to the k8s Secret that holds the shared secrets
 # (INGEST_TOKEN_SIGNING_KEY, JWT_* , GITHUB_* OAuth, VAULT_DEV token when using a

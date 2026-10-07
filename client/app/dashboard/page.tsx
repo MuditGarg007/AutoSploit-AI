@@ -1,7 +1,11 @@
-// Engagements index. Where Clerk lands a user after sign in. An overview strip,
-// then the run table; each row opens the live view. Reads mock rows until the
-// control-plane list endpoint is wired. Rendered inside the dashboard shell
-// (sidebar + top bar), not the marketing navbar.
+// Engagements index. Where GitHub OAuth lands a signed-in user. An overview
+// strip, then the run table; each row opens the live view. The list is fetched
+// client-side (listEngagements) because the session token lives in the browser,
+// not in a server-readable cookie — a server fetch here would have no auth and
+// fall back to mock. Rendered inside the dashboard shell (sidebar + top bar).
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import DashboardShell from "@/components/dashboard/DashboardShell";
 import PageHeader from "@/components/dashboard/PageHeader";
@@ -53,8 +57,23 @@ function summarize(rows: EngagementRow[]): Stat[] {
   ];
 }
 
-export default async function DashboardPage() {
-  const rows = await listEngagements();
+export default function DashboardPage() {
+  const [rows, setRows] = useState<EngagementRow[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    listEngagements()
+      .then((r) => {
+        if (alive) setRows(r);
+      })
+      .catch(() => {
+        /* keep the last list on a transient failure */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return (
     <DashboardShell>
       <PageHeader

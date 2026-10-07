@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
-import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -62,15 +61,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <ClerkProvider>
-      <html
-        lang="en"
-        className={`${geistSans.variable} h-full antialiased`}
-      >
-        <body className="min-h-full flex flex-col bg-canvas text-muted">
-          {children}
-        </body>
-      </html>
-    </ClerkProvider>
+    <html lang="en" className={`${geistSans.variable} h-full antialiased`}>
+      <body className="min-h-full flex flex-col bg-canvas text-muted">
+        {children}
+      </body>
+    </html>
   );
 }

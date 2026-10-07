@@ -36,6 +36,18 @@ export class EnvService {
   readonly publicBaseUrl =
     process.env.PUBLIC_BASE_URL ?? `http://localhost:${this.port}`;
 
+  // --- Frontend bridge (CORS allowlist + OAuth post-login redirect) ---
+  // Comma-separated list of allowed browser origins (no trailing slash). The
+  // control plane answers credentialed cross-origin requests only from these
+  // (enableCors in main.ts) and sends the user back to the first one after the
+  // GitHub OAuth handshake. Defaults to the local Next dev origin so dev/CI need
+  // no extra var. In prod set FRONTEND_URL to the Vercel origin.
+  readonly frontendUrls = (process.env.FRONTEND_URL ?? 'http://localhost:3000')
+    .split(',')
+    .map((s) => s.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  readonly frontendUrl = this.frontendUrls[0] ?? 'http://localhost:3000';
+
   // --- GitHub OAuth (Identity slice A, §4.A) ---
   readonly githubClientId = this.required('GITHUB_CLIENT_ID');
   readonly githubClientSecret = this.required('GITHUB_CLIENT_SECRET');

@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ADD COLUMN "prev_refresh_token_hash" text;

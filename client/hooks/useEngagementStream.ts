@@ -19,6 +19,7 @@ import {
   type EngagementView,
 } from "@/lib/events";
 import { driveMockStream } from "@/lib/mock-stream";
+import { getToken } from "@/lib/token";
 
 export type StreamStatus =
   | "connecting"
@@ -62,9 +63,12 @@ export function useEngagementStream(
 
     // Live path.
     setStatus("connecting");
-    const url = `${API_BASE}/engagements/${encodeURIComponent(
-      engagementId,
-    )}/stream`;
+    // EventSource cannot set an Authorization header, so the access token rides
+    // as a query param; the SessionGuard accepts it on the stream route only.
+    const token = getToken();
+    const url =
+      `${API_BASE}/engagements/${encodeURIComponent(engagementId)}/stream` +
+      (token ? `?access_token=${encodeURIComponent(token)}` : "");
     const es = new EventSource(url, { withCredentials: true });
 
     es.onopen = () => setStatus("live");

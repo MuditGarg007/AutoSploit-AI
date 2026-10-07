@@ -2,12 +2,14 @@ import {
   Controller,
   Get,
   Inject,
+  Post,
   Query,
   Req,
   Res,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import type { CookieSerializeOptions } from '@fastify/cookie';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { EnvService } from '../../config/env.service.js';
@@ -74,17 +76,74 @@ export class IdentityController {
     });
 
     res.clearCookie(STATE_COOKIE, { path: '/' });
-    res.setCookie(REFRESH_COOKIE, session.refreshToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
-      secure: this.env.isProd,
-      expires: session.refreshExpiresAt,
-    });
+    res.setCookie(
+      REFRESH_COOKIE,
+      session.refreshToken,
+      this.refreshCookieOpts(session.refreshExpiresAt),
+    );
+    // Hand the short-lived access token back to the browser frontend (a
+    // different origin than this API). The SPA reads it off the URL, stores it,
+    // and sends it as a Bearer token; the httpOnly refresh cookie above backs
+    // the silent re-issue at POST /auth/refresh.
     res.redirect(
       302,
-      `/?${ACCESS_TOKEN_PARAM}=${encodeURIComponent(session.accessToken)}`,
+      `${this.env.frontendUrl}/dashboard?${ACCESS_TOKEN_PARAM}=${encodeURIComponent(
+        session.accessToken,
+      )}`,
     );
+  }
+
+  // Silent re-issue: the SPA's access token is short-lived (15 min), so the
+  // client POSTs here with the httpOnly refresh cookie to get a fresh access
+  // token (and a rotated refresh cookie). Rotation reuse → the service revokes
+  // the session and returns null → 401 (fail-closed).
+  @Post('auth/refresh')
+  async refresh(
+    @Req() req: FastifyRequest,
+    @Res() res: FastifyReply,
+  ): Promise<{ accessToken: string }> {
+    const presented = req.cookies?.[REFRESH_COOKIE];
+    if (!presented) throw new UnauthorizedException('No refresh token');
+
+    const session = await this.identity.rotateRefresh(presented);
+    if (!session) {
+      res.clearCookie(REFRESH_COOKIE, { path: '/' });
+      throw new UnauthorizedException('Refresh token invalid or expired');
+    }
+
+    res.setCookie(
+      REFRESH_COOKIE,
+      session.refreshToken,
+      this.refreshCookieOpts(session.refreshExpiresAt),
+    );
+    return { accessToken: session.accessToken };
+  }
+
+  // Sign out: drop the server session and clear the refresh cookie. Needs a
+  // valid access token so one user cannot revoke another's session.
+  @Post('auth/logout')
+  @UseGuards(SessionGuard)
+  async logout(
+    @CurrentUser() auth: AuthenticatedUser,
+    @Res() res: FastifyReply,
+  ): Promise<void> {
+    await this.identity.revokeSession(auth.sessionId);
+    res.clearCookie(REFRESH_COOKIE, { path: '/' });
+    res.send({ ok: true });
+  }
+
+  // Refresh-cookie options. Cross-site in prod (the frontend is a different
+  // origin than this API), so the cookie needs SameSite=None, which the browser
+  // only honors alongside Secure. In dev over plain HTTP there is no cross-site
+  // leg, so fall back to Lax + non-secure so localhost works without TLS.
+  private refreshCookieOpts(expires: Date): CookieSerializeOptions {
+    return {
+      httpOnly: true,
+      sameSite: this.env.isProd ? 'none' : 'lax',
+      secure: this.env.isProd,
+      path: '/',
+      expires,
+    };
   }
 
   // 3. /me — the authenticated user from a valid session.

@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { useClerk, useUser } from "@clerk/nextjs";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/format";
 import { listEngagements } from "@/lib/api";
 import type { EngagementRow } from "@/lib/mock-engagements";
@@ -19,7 +19,6 @@ import {
   GridIcon,
   LogOutIcon,
   PlusIcon,
-  SettingsIcon,
   UserIcon,
 } from "./icons";
 
@@ -86,13 +85,12 @@ function RunLink({
   );
 }
 
-// Bottom user card: avatar, name, email. The whole row is a button that opens a
-// popover above it with account settings and sign out. Clerk data loads
-// client-side; a quiet skeleton holds the row height until it does. The menu
-// closes on outside click, Escape, or selecting an item.
+// Bottom user card: avatar + GitHub login, opening a small popover with sign
+// out. The user loads client-side from the control plane (useAuth); a quiet
+// skeleton holds the row height until it resolves. The menu closes on outside
+// click, Escape, or selecting an item.
 function UserCard() {
-  const { user: activeUser, isLoaded } = useUser();
-  const { signOut, openUserProfile } = useClerk();
+  const { user: activeUser, status, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -112,7 +110,7 @@ function UserCard() {
     };
   }, [open]);
 
-  if (!isLoaded) {
+  if (status === "loading") {
     return (
       <div className="flex items-center gap-3 px-2 py-1.5">
         <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-surface-2" />
@@ -126,8 +124,7 @@ function UserCard() {
 
   if (!activeUser) return null;
 
-  const name = activeUser.fullName ?? activeUser.username ?? "Account";
-  const email = activeUser.primaryEmailAddress?.emailAddress ?? "";
+  const name = activeUser.githubLogin;
 
   return (
     <div ref={ref} className="relative">
@@ -141,21 +138,9 @@ function UserCard() {
             role="menuitem"
             onClick={() => {
               setOpen(false);
-              openUserProfile();
+              void signOut();
             }}
-            className="flex w-full items-center gap-3 px-3 py-2 text-sm text-muted transition-colors hover:bg-white/5 hover:text-text"
-          >
-            <SettingsIcon size={16} className="text-faint" />
-            Account settings
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              void signOut({ redirectUrl: "/" });
-            }}
-            className="flex w-full items-center gap-3 border-t border-white/10 px-3 py-2 text-sm text-accent-bright transition-colors hover:bg-accent-soft"
+            className="flex w-full items-center gap-3 px-3 py-2 text-sm text-accent-bright transition-colors hover:bg-accent-soft"
           >
             <LogOutIcon size={16} className="text-accent-bright" />
             Sign out
@@ -173,12 +158,12 @@ function UserCard() {
           open && "bg-white/5",
         )}
       >
-        {activeUser.imageUrl ? (
-          // Clerk-hosted avatar; a plain img avoids a next/image remote-pattern
-          // config for the Clerk CDN.
+        {activeUser.avatarUrl ? (
+          // GitHub-hosted avatar; a plain img avoids a next/image remote-pattern
+          // config for the GitHub avatar CDN.
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={activeUser.imageUrl}
+            src={activeUser.avatarUrl}
             alt=""
             className="h-8 w-8 shrink-0 rounded-full object-cover"
           />
@@ -190,7 +175,6 @@ function UserCard() {
 
         <div className="min-w-0 flex-1 leading-tight">
           <p className="truncate text-sm font-medium text-text">{name}</p>
-          {email && <p className="truncate text-xs text-faint">{email}</p>}
         </div>
 
         <ChevronRightIcon
