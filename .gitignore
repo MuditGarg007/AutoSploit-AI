@@ -19,3 +19,7 @@ __pycache__/
 
 # CommandCode local config (not shared)
 .commandcode/
+
+# Claude Code agent instructions (local only, not shared on remote)
+CLAUDE.md
+**/CLAUDE.md
