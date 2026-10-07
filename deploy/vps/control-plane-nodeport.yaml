@@ -1,0 +1,32 @@
+# Public-exposure NodePort for the control-plane backend on the Contabo VPS.
+#
+# The helm chart ships the control plane as a ClusterIP Service
+# (control-plane-control-plane, :80 -> :3000), which is only reachable inside
+# the kind cluster. The host-level Caddy reverse proxy cannot reach a ClusterIP,
+# so this standalone NodePort Service bridges the gap: it selects the same pods
+# and publishes them on the kind node at :30080, which the host reaches over the
+# docker bridge (kind node IP 172.18.0.2).
+#
+# This is deliberately NOT part of the helm release, so `helm upgrade` never
+# touches or drifts it. It must be re-applied by hand if the kind cluster is
+# recreated.
+#
+#   kubectl apply -f deploy/vps/control-plane-nodeport.yaml
+#
+# Verify the bridge from the host:
+#   curl -s http://172.18.0.2:30080/health   # -> {"status":"ok","db":"up"}
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane-nodeport
+  namespace: autosploit-system
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/component: app
+    app.kubernetes.io/name: control-plane
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      nodePort: 30080

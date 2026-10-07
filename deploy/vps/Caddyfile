@@ -1,0 +1,13 @@
+# Host-level Caddy reverse proxy for the control-plane backend.
+#
+# Lives at /etc/caddy/Caddyfile on the Contabo VPS (root@169.58.86.230).
+# Caddy terminates TLS (automatic Let's Encrypt cert, auto-renewed) and proxies
+# to the control-plane NodePort on the kind node. It also issues an automatic
+# HTTP -> HTTPS (308) redirect.
+#
+# Reload after editing:
+#   caddy validate --config /etc/caddy/Caddyfile
+#   systemctl restart caddy
+api.autosploit.muditgarg.xyz {
+	reverse_proxy 172.18.0.2:30080
+}
