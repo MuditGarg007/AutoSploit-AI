@@ -41,6 +41,13 @@ RUN groupadd -r autosploit && useradd -r -g autosploit -m autosploit
 WORKDIR /app
 COPY --from=build --chown=autosploit:autosploit /app/node_modules ./node_modules
 COPY --from=build --chown=autosploit:autosploit /app/packages ./packages
+# bun >=1.2 uses an isolated install layout: the root node_modules holds only the
+# .bun content store, while each workspace's node_modules holds the symlinks that
+# resolve into it (e.g. control-plane/node_modules/reflect-metadata -> ../../node_modules/.bun/...).
+# dist/main.js resolves its deps through control-plane/node_modules, so that dir must
+# ship too — without it every top-level import (reflect-metadata, @nestjs/*, the
+# @autosploit/contracts workspace link) fails with ERR_MODULE_NOT_FOUND at boot.
+COPY --from=build --chown=autosploit:autosploit /app/control-plane/node_modules ./control-plane/node_modules
 COPY --from=build --chown=autosploit:autosploit /app/control-plane/dist ./control-plane/dist
 COPY --from=build --chown=autosploit:autosploit /app/control-plane/package.json ./control-plane/package.json
 # Some bun-installed files land mode 0600/root-only; ensure the non-root runtime
