@@ -73,12 +73,19 @@ cilium status --wait --wait-duration 3m
 kubectl wait --for=condition=Ready node --all --timeout=120s
 
 # 3. Register the gVisor (runsc) containerd runtime in the node, then restart it.
-say "registering runsc runtime in node containerd"
+#    The runtime options point runsc at /etc/containerd/runsc.toml, which pins
+#    platform=systrap (capacity handoff B4). This box has no /dev/kvm and no
+#    nested virt, so runsc already picks systrap; the pin just guards against a
+#    silent fall back to the slow ptrace platform on a runsc/kernel bump. The
+#    config file is (re)written each run so the pin survives even when the
+#    containerd runtime block is already present.
+say "registering runsc runtime in node containerd (platform=systrap pinned)"
 docker exec "$NODE" bash -c '
   set -e; CFG=/etc/containerd/config.toml
+  printf "[runsc_config]\n  platform = \"systrap\"\n" > /etc/containerd/runsc.toml
   if ! grep -q "runtimes.runsc\]" "$CFG"; then
     cp "$CFG" "$CFG.bak.$(date +%s)"
-    printf "\n[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc]\n  runtime_type = \"io.containerd.runsc.v1\"\n" >> "$CFG"
+    printf "\n[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc]\n  runtime_type = \"io.containerd.runsc.v1\"\n  [plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc.options]\n    TypeUrl = \"io.containerd.runsc.v1.options\"\n    ConfigPath = \"/etc/containerd/runsc.toml\"\n" >> "$CFG"
   fi
   systemctl restart containerd'
 kubectl wait --for=condition=Ready node --all --timeout=120s

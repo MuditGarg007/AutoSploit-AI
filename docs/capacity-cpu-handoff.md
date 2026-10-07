@@ -6,8 +6,8 @@
 **Measured on:** Contabo VPS `root@169.58.86.230`, repo rev `2cf5ee6` (one commit
 behind local `main`; architecture identical for everything below)
 **Status:** investigation complete, measured live on the VPS. **Tier A (A1 + A2)
-implemented 2026-10-07** (see §5); B-levers below are still proposals, not
-implemented.
+and all B-levers (B1–B4) implemented 2026-10-07** (see §0/§5); B2's standing cache
+registry + egress edge are the only remaining deploy wiring.
 
 ## 0. Implemented (Tier A, 2026-10-07)
 
@@ -61,10 +61,30 @@ implemented.
   helpers); whole conductor suite green (163 passed, the 3 pre-existing
   provisioner-`build`-gap files aside).
 
+- **B3** — lengthen the attack-phase poll interval, implemented 2026-10-07.
+  `conductor/src/autosploit_conductor/k8s/run.py` `run_k8s` now defaults
+  `poll_interval_s` to `5.0` (was `2.0`). This is the longest poll loop in the
+  system — it runs for the whole network-bound attack phase and every poll hits
+  the already-busy apiserver — so 5s over 2s is the real apiserver-churn cut. The
+  short, bounded provision checks (registry come-up and the Kaniko build watch in
+  `provision.py`) stay at 2s so terminal detection there is still snappy. No new
+  components, no trust-boundary change; the only cost is slightly slower terminal
+  detection on a run that lasts minutes to an hour. No test pins the interval
+  (the watcher's clock is injected), so the suite is unaffected.
+
+- **B4** — pin gVisor `platform=systrap`, implemented 2026-10-07.
+  `scripts/m4-bootstrap.sh` now writes `/etc/containerd/runsc.toml`
+  (`[runsc_config] platform = "systrap"`) on the node and points the
+  `io.containerd.runsc.v1` runtime options at it via `ConfigPath`. The box has no
+  `/dev/kvm` and no nested virt, so runsc already selects systrap; this is the
+  verify/pin flagged in §5 — it guards against a silent fall back to the slow
+  ptrace platform on a runsc/kernel bump. The config is re-written every run so
+  the pin survives even when the containerd runtime block already exists.
+
 Still open to fully realize B2 in the deploy: stand up the long-lived cache registry
 (Deployment + Service + PVC in a stable in-trust-boundary namespace) + the
-control-plane egress edge to it, and set `BUILD_CACHE_REGISTRY`. Then B3/B4 cheap
-cleanups.
+control-plane egress edge to it, and set `BUILD_CACHE_REGISTRY`. B3/B4 are done; all
+B-levers are now implemented.
 
 ## 1. The question
 
@@ -180,8 +200,8 @@ ROI = impact ÷ (effort · risk). Nothing here is implemented yet.
 | 2 | A2 — gate only the build phase ✅ done | capacity | unlocks ~8–10 concurrent | medium | low |
 | 3 | B1 — Kaniko CPU flags ✅ done | CPU cut | large per build | small | low |
 | 4 | B2 — build cache / skip rebuilds ✅ done (conductor-side; deploy infra still open) | CPU cut | ~100 % on re-runs | medium | medium |
-| 5 | B3 — lengthen poll intervals | CPU cut | small | tiny | low |
-| 6 | B4 — pin gVisor `platform=systrap` | CPU cut | marginal (verify) | tiny | low |
+| 5 | B3 — lengthen poll intervals ✅ done | CPU cut | small | tiny | low |
+| 6 | B4 — pin gVisor `platform=systrap` ✅ done | CPU cut | marginal (verify) | tiny | low |
 | — | B5 — drop redundant kube-proxy | — | **skip** | — | high |
 
 ### A1 — Make worker concurrency an env knob, default 3

@@ -107,7 +107,11 @@ def run_k8s(
     helm: HelmRunner = _helm,
     chart_dir: Path = _DEFAULT_CHART_DIR,
     timeout_s: float | None = None,
-    poll_interval_s: float = 2.0,
+    # The attacker watch is the longest poll loop in the system — it runs for the
+    # whole (network-bound) attack phase, and every poll hits the already-busy
+    # apiserver (capacity handoff B3). 5s over 2s shaves that churn; the only cost
+    # is slightly slower terminal detection on a run that lasts minutes to an hour.
+    poll_interval_s: float = 5.0,
     env: Mapping[str, str] | None = None,
     now: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
