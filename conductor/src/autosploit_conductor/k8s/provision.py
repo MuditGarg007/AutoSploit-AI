@@ -30,6 +30,7 @@ import tempfile
 import time
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from pathlib import Path
 
 from autosploit_provisioner.contracts.plan import Source
@@ -39,6 +40,7 @@ from autosploit_conductor import config_gen
 from autosploit_conductor.context import EngagementContext
 from autosploit_conductor.k8s import manifests as m
 from autosploit_conductor.k8s.build_gate import build_slot
+from autosploit_conductor.k8s.cache import BuildCache, CacheError, content_hash
 from autosploit_conductor.k8s.client import EngagementCluster
 from autosploit_conductor.k8s.mirror import mirror_base_image
 from autosploit_conductor.k8s.run import K8sProvision
@@ -75,10 +77,14 @@ def phaseb_provision(
     resolve_fn: Callable[[str, Path], Source] = resolve_source,
     mirror_fn: Callable[[str, str], None] = mirror_base_image,
     gate_fn: Callable[[], AbstractContextManager[None]] = build_slot,
+    cache: BuildCache | None = None,
 ) -> K8sProvision:
     """Build the target in-cluster with Kaniko and return its deploy handle (M8)."""
     engagement_id = ctx.engagement_id
     destination = m.target_image_ref(engagement_id)
+    # Long-lived build cache (handoff B2). `None` ⇒ read `BUILD_CACHE_REGISTRY` now;
+    # unset there ⇒ caching off and the flow is exactly the pre-B2 build path.
+    cache = cache if cache is not None else BuildCache()
 
     # 1. Registry up and ready before anything pushes to it.
     cluster.create_registry_pod()
@@ -104,36 +110,72 @@ def phaseb_provision(
     #    conductor; the registry (above) and scope emit (below) stay ungated, and
     #    the long attack phase that follows in `run_k8s` never holds a slot.
     with gate_fn():
-        context, context_configmap, registry_mirror = _prepare_build_context(
+        prepared = _clone_and_pack(
             repo_ref,
             engagement_id,
-            cluster,
             dockerfile=dockerfile,
             resolve_fn=resolve_fn,
-            mirror_fn=mirror_fn,
         )
-        # Kaniko build → push. Watch to a terminal phase; only Succeeded is a build.
-        cluster.create_build_pod(
-            context=context,
-            destination=destination,
-            dockerfile=dockerfile,
-            context_configmap=context_configmap,
-            registry_mirror=registry_mirror,
-        )
-        outcome = watch_pod(
-            cluster,
-            m.BUILD_POD_NAME,
-            timeout_s=build_timeout_s,
-            poll_interval_s=poll_interval_s,
-            now=now,
-            sleep=sleep,
-        )
-    if outcome.timed_out:
-        raise ProvisionError("kaniko build timed out")
-    if outcome.phase != "Succeeded":
-        raise ProvisionError(
-            f"kaniko build failed (phase={outcome.phase}, exit={outcome.exit_code})"
-        )
+
+        # Build-cache fast path (B2): an unchanged context whose image is already in
+        # the long-lived cache is copied straight into the per-engagement registry,
+        # skipping the base mirror + Kaniko build entirely. Only a real build context
+        # (not the `dir://` passthrough) is cacheable, and only when a cache registry
+        # is configured. Fail-open: a probe/copy failure falls back to a real build.
+        cache_ref: str | None = None
+        built_from_cache = False
+        if prepared.files is not None and cache.registry() is not None:
+            cache_ref = cache.ref_for(content_hash(prepared.files, dockerfile))
+            try:
+                if cache.image_exists(cache_ref):
+                    cache.copy(cache_ref, destination)
+                    built_from_cache = True
+            except CacheError:
+                built_from_cache = False  # fall through to a real build
+
+        if not built_from_cache:
+            # Mirror each external `FROM` base into the per-engagement registry, pack
+            # the context ConfigMap, then run Kaniko and watch to a terminal phase
+            # (only Succeeded is a build). A `dir://` passthrough has no files to pack
+            # or bases to mirror — its context is staged on the builders already.
+            context_configmap: str | None = None
+            if prepared.files is not None:
+                try:
+                    for base in prepared.bases:
+                        mirror_fn(base, _mirror_dst(base, prepared.mirror))
+                except Exception as exc:  # crane / mirror failures → fail-closed
+                    raise ProvisionError(
+                        f"build-context preparation failed: {exc}"
+                    ) from exc
+                context_configmap = cluster.create_build_context_configmap(prepared.files)
+            cluster.create_build_pod(
+                context=prepared.context,
+                destination=destination,
+                dockerfile=dockerfile,
+                context_configmap=context_configmap,
+                registry_mirror=prepared.mirror,
+            )
+            outcome = watch_pod(
+                cluster,
+                m.BUILD_POD_NAME,
+                timeout_s=build_timeout_s,
+                poll_interval_s=poll_interval_s,
+                now=now,
+                sleep=sleep,
+            )
+            if outcome.timed_out:
+                raise ProvisionError("kaniko build timed out")
+            if outcome.phase != "Succeeded":
+                raise ProvisionError(
+                    f"kaniko build failed (phase={outcome.phase}, exit={outcome.exit_code})"
+                )
+            # Populate the cache from the freshly built image. Fail-open: the target
+            # is already built and pushed, so a cache-populate failure is swallowed.
+            if cache_ref is not None:
+                try:
+                    cache.copy(destination, cache_ref)
+                except CacheError:
+                    pass
 
     # 3. Scope + run config for the attacker, pointing at the target's Service DNS.
     dialed_port = service_port if service_port is not None else target_port
@@ -147,32 +189,45 @@ def phaseb_provision(
     )
 
 
-def _prepare_build_context(
+@dataclass(frozen=True)
+class _Prepared:
+    """The conductor-side build inputs, before anything touches the build Pod.
+
+    `files` is the packed repo workdir (relative path -> text) and `bases` the
+    external `FROM` images to mirror; both are `None`/empty for a `dir://`
+    passthrough, whose context is staged on the builders rather than cloned here.
+    `context` is the Kaniko `--context` URI and `mirror` the `--registry-mirror`
+    endpoint (None on passthrough). Splitting clone+pack out from the mirror/build
+    step lets the caller content-hash `files` for the cache fast path (B2) before
+    deciding whether to mirror and build at all.
+    """
+
+    context: str
+    files: Mapping[str, str] | None
+    bases: list[str]
+    mirror: str | None
+
+
+def _clone_and_pack(
     repo_ref: str,
     engagement_id: str,
-    cluster: EngagementCluster,
     *,
     dockerfile: str,
     resolve_fn: Callable[[str, Path], Source],
-    mirror_fn: Callable[[str, str], None],
-) -> tuple[str, str | None, str | None]:
-    """Prepare the Kaniko context under the live egress; return (context, cm, mirror).
+) -> _Prepared:
+    """Clone conductor-side and pack the context under the live egress (M5).
 
     A ref that already names an in-cluster `dir://` context is passed straight
-    through — nothing to clone or mirror (the negative-control `git://` context the
-    proof uses is created directly on the builders, never here). Every other ref is
-    handled the M5 way, because the build Pod has no egress:
-
-    1. clone conductor-side via the reused provisioner `resolve_source`;
-    2. preload each external `FROM` base into the per-engagement mirror (`mirror_fn`);
-    3. pack the workdir into the build-context ConfigMap (fail-closed on oversize).
-
-    The Kaniko context is then `dir://<mount>` served from that ConfigMap, with
-    `--registry-mirror` pointed at the same registry. A clone/mirror/oversize failure
-    raises `ProvisionError` (recorded as `failed(provision)`, never a crash).
+    through — nothing to clone (the negative-control `git://` context the proof uses
+    is created directly on the builders, never here). Every other ref is cloned via
+    the reused provisioner `resolve_source`, its external `FROM` bases discovered,
+    and its workdir packed into the build-context map (fail-closed on oversize). The
+    base *mirror* and the ConfigMap creation happen later in `phaseb_provision`, only
+    on a cache miss. A clone/read/oversize failure raises `ProvisionError` (recorded
+    as `failed(provision)`, never a crash).
     """
     if repo_ref.startswith("dir://"):
-        return repo_ref, None, None
+        return _Prepared(context=repo_ref, files=None, bases=[], mirror=None)
 
     mirror = m.registry_mirror_endpoint(engagement_id)
     with tempfile.TemporaryDirectory(prefix=f"autosploit-{engagement_id}-") as tmp:
@@ -186,16 +241,19 @@ def _prepare_build_context(
                     "buildable repo; Phase B builds a Dockerfile repo in-cluster "
                     "(compose/image sources deferred, roadmap §5)"
                 )
-            for base in _external_bases(repo_root / dockerfile):
-                mirror_fn(base, _mirror_dst(base, mirror))
+            bases = _external_bases(repo_root / dockerfile)
             files = _pack_context(repo_root)
         except ProvisionError:
             raise
-        except Exception as exc:  # clone / crane / read failures → fail-closed
+        except Exception as exc:  # clone / read failures → fail-closed
             raise ProvisionError(f"build-context preparation failed: {exc}") from exc
-        name = cluster.create_build_context_configmap(files)
 
-    return f"dir://{m.BUILD_CONTEXT_MOUNT}", name, mirror
+    return _Prepared(
+        context=f"dir://{m.BUILD_CONTEXT_MOUNT}",
+        files=files,
+        bases=bases,
+        mirror=mirror,
+    )
 
 
 def _clone_ref(repo_ref: str) -> str:

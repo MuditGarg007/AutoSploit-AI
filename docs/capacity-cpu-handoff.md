@@ -30,7 +30,41 @@ implemented.
   `WORKER_CONCURRENCY=3` **and** `BUILD_CONCURRENCY=2` together — A1 without A2
   lets 3 concurrent engagements hit the build phase at once (§6).
 
-Still open: **B1** (Kaniko CPU flags) is the recommended next step, then B2.
+- **B1** — Kaniko CPU flags, implemented 2026-10-07 (see §5 for the rationale per
+  flag). `conductor/src/autosploit_conductor/k8s/manifests.py`
+  `kaniko_build_pod_manifest` now appends `--use-new-run`, `--snapshot-mode=redo`,
+  `--single-snapshot`, `--compression-level=1`, and `--compressed-caching=false`
+  to the base build args (before the opt-in mirror flags). Append-only; no change
+  to what is built or pushed, nothing new in the trust boundary. Tests updated:
+  the exact-args assertion in `conductor/tests/test_k8s_manifests.py` now expects
+  these flags (whole kaniko/client/provision suite green, 57 passed).
+
+- **B2** — content-hash build cache, implemented 2026-10-07 (see §5 for the
+  rationale). New conductor module `conductor/src/autosploit_conductor/k8s/cache.py`
+  (`BuildCache`, `content_hash`, `cache_registry`) + restructured `provision.py`:
+  `phaseb_provision` now clones/packs the context first, content-hashes the packed
+  files + Dockerfile path, and — when a long-lived cache registry holds that hash's
+  image — `crane copy`s it straight into the per-engagement registry, **skipping the
+  base mirror and the Kaniko build entirely** (100 % of that run's build CPU). A miss
+  builds as before and then populates the cache from the freshly built image. Only
+  the trusted conductor writes the shared cache (no cross-engagement poisoning
+  surface, no new build-Pod egress edge); crane runs in the control-plane Pod exactly
+  like the M5 mirror, so still no docker socket in the path.
+
+  New conductor env: `BUILD_CACHE_REGISTRY` (`host:port` of the long-lived cache
+  registry). **Fail-open, opt-in**: unset ⇒ caching off and provision behaves exactly
+  as pre-B2; a cache probe/copy failure falls back to a real build (hit) or is
+  swallowed (populate) — the target is built and pushed regardless. Caveat: the hash
+  covers the packed context only, so a `FROM <base>:latest` whose upstream digest
+  drifts is not reflected — pin base tags/digests in the target repo. Tests:
+  `conductor/tests/test_k8s_cache.py` (hit/miss/populate/fail-open + the pure
+  helpers); whole conductor suite green (163 passed, the 3 pre-existing
+  provisioner-`build`-gap files aside).
+
+Still open to fully realize B2 in the deploy: stand up the long-lived cache registry
+(Deployment + Service + PVC in a stable in-trust-boundary namespace) + the
+control-plane egress edge to it, and set `BUILD_CACHE_REGISTRY`. Then B3/B4 cheap
+cleanups.
 
 ## 1. The question
 
@@ -144,8 +178,8 @@ ROI = impact ÷ (effort · risk). Nothing here is implemented yet.
 |---|-------|------|-----|--------|------|
 | 1 | A1 — worker concurrency → 3 (env-driven) ✅ done | capacity | ~3× throughput | tiny | low (pair with A2) |
 | 2 | A2 — gate only the build phase ✅ done | capacity | unlocks ~8–10 concurrent | medium | low |
-| 3 | B1 — Kaniko CPU flags | CPU cut | large per build | small | low |
-| 4 | B2 — build cache / skip rebuilds | CPU cut | ~100 % on re-runs | medium | medium |
+| 3 | B1 — Kaniko CPU flags ✅ done | CPU cut | large per build | small | low |
+| 4 | B2 — build cache / skip rebuilds ✅ done (conductor-side; deploy infra still open) | CPU cut | ~100 % on re-runs | medium | medium |
 | 5 | B3 — lengthen poll intervals | CPU cut | small | tiny | low |
 | 6 | B4 — pin gVisor `platform=systrap` | CPU cut | marginal (verify) | tiny | low |
 | — | B5 — drop redundant kube-proxy | — | **skip** | — | high |
@@ -179,12 +213,22 @@ currently passes only `--context --dockerfile --destination --insecure`
 - `--compressed-caching=false` — less CPU and RAM.
 Append-only, well-trodden flags. Best CPU-cut ROI.
 
-### B2 — Build cache / skip unchanged rebuilds
-Kaniko `--cache=true --cache-repo=<shared internal registry>`, or content-hash the
-build context and reuse the prior image when unchanged. A re-run of an unchanged
-target then skips the entire build — 100 % of build CPU gone. Needs a long-lived
-**internal** cache registry (the per-engagement one is ephemeral); keep it inside
-the trust boundary. Big win if users re-run the same target.
+### B2 — Build cache / skip unchanged rebuilds ✅ (content-hash full-skip)
+Two candidate mechanisms were on the table: Kaniko `--cache=true --cache-repo`
+(partial, per-layer) vs content-hashing the build context and reusing the prior
+image when unchanged (full skip). **Implemented the content-hash full-skip** — it
+matches the "100 % of build CPU gone" line and, decisively for this project, keeps
+the trust boundary intact: only the trusted conductor reads/writes the shared cache
+(crane copy from the control-plane Pod, like the M5 mirror), so untrusted Kaniko
+Pods never touch a cross-engagement store and gain no new egress edge. Kaniko
+`--cache-repo` would have had every untrusted build Pod write a shared long-lived
+registry (cache-poisoning surface) and need an egress edge to it — a hole in exactly
+the M7 isolation this project enforces. A re-run of an unchanged target now skips the
+base mirror + Kaniko build entirely. Needs a long-lived **internal** cache registry
+(the per-engagement one is ephemeral); kept inside the trust boundary. Big win if
+users re-run the same target. Conductor-side logic landed env-gated and fail-open
+(`BUILD_CACHE_REGISTRY`); the standing cache registry + control-plane egress edge are
+the remaining deploy wiring (§0).
 
 ### B3 — Lengthen poll intervals
 `conductor/src/autosploit_conductor/k8s/watch.py` polls the Pod `status.phase`
