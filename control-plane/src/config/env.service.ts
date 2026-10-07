@@ -20,6 +20,13 @@ export class EnvService {
   // the surviving conductor.json record lives at <out>/<id>/conductor.json.
   readonly conductorOutDir = process.env.CONDUCTOR_OUT_DIR ?? '/tmp/autosploit-runs';
   readonly conductorTimeoutS = Number(process.env.CONDUCTOR_TIMEOUT_S ?? 3600);
+  // How many engagements the BullMQ worker runs end to end at once (capacity lever
+  // A1, docs/capacity-cpu-handoff.md). The attack phase is network-bound (~0 CPU),
+  // so engagements overlap comfortably; the default 3 uses the otherwise-idle cores
+  // on the single box. MUST pair with the conductor build gate (BUILD_CONCURRENCY,
+  // lever A2) so overlapping engagements do not run the CPU-heavy build phase all
+  // at once. Clamped to >=1 so a bad value can never stall the worker.
+  readonly workerConcurrency = this.positiveInt(process.env.WORKER_CONCURRENCY, 3);
   // Shared C(mint) <-> D(validate) signing key for per-engagement ingest tokens
   // (§8.1). Optional at boot so pre-P3 slices (health/repos/identity) can start
   // without it; IngestTokenService fails fast if used without a key.
@@ -92,6 +99,13 @@ export class EnvService {
     process.env.OTEL_SERVICE_NAME ?? 'autosploit-control-plane';
   // Log level for Pino; JSON in prod, pretty in dev.
   readonly logLevel = process.env.LOG_LEVEL ?? (this.isProd ? 'info' : 'debug');
+
+  // Parse an optional positive-integer env var, falling back to `fallback` for an
+  // unset, non-numeric, or <1 value (so a typo can never stall the worker).
+  private positiveInt(raw: string | undefined, fallback: number): number {
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 1 ? n : fallback;
+  }
 
   private required(key: string): string {
     const v = process.env[key];

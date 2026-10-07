@@ -29,6 +29,7 @@ from __future__ import annotations
 import tempfile
 import time
 from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 from autosploit_provisioner.contracts.plan import Source
@@ -37,6 +38,7 @@ from autosploit_provisioner.source.cloner import resolve_source
 from autosploit_conductor import config_gen
 from autosploit_conductor.context import EngagementContext
 from autosploit_conductor.k8s import manifests as m
+from autosploit_conductor.k8s.build_gate import build_slot
 from autosploit_conductor.k8s.client import EngagementCluster
 from autosploit_conductor.k8s.mirror import mirror_base_image
 from autosploit_conductor.k8s.run import K8sProvision
@@ -72,6 +74,7 @@ def phaseb_provision(
     sleep: Callable[[float], None] = time.sleep,
     resolve_fn: Callable[[str, Path], Source] = resolve_source,
     mirror_fn: Callable[[str, str], None] = mirror_base_image,
+    gate_fn: Callable[[], AbstractContextManager[None]] = build_slot,
 ) -> K8sProvision:
     """Build the target in-cluster with Kaniko and return its deploy handle (M8)."""
     engagement_id = ctx.engagement_id
@@ -94,30 +97,37 @@ def phaseb_provision(
     #    bases into the mirror, pack the workdir into a ConfigMap. Then Kaniko builds
     #    from the `dir://` context and pulls bases via `--registry-mirror` — no egress
     #    from the build Pod, which the live M7 policy denies anyway.
-    context, context_configmap, registry_mirror = _prepare_build_context(
-        repo_ref,
-        engagement_id,
-        cluster,
-        dockerfile=dockerfile,
-        resolve_fn=resolve_fn,
-        mirror_fn=mirror_fn,
-    )
-    # Kaniko build → push. Watch to a terminal phase; only Succeeded is a build.
-    cluster.create_build_pod(
-        context=context,
-        destination=destination,
-        dockerfile=dockerfile,
-        context_configmap=context_configmap,
-        registry_mirror=registry_mirror,
-    )
-    outcome = watch_pod(
-        cluster,
-        m.BUILD_POD_NAME,
-        timeout_s=build_timeout_s,
-        poll_interval_s=poll_interval_s,
-        now=now,
-        sleep=sleep,
-    )
+    #
+    #    This whole stretch — the conductor-side clone/`crane copy` and the Kaniko
+    #    build Pod — is the one CPU-heavy phase, so it runs inside the build gate
+    #    (capacity lever A2). The gate caps concurrent builds across every running
+    #    conductor; the registry (above) and scope emit (below) stay ungated, and
+    #    the long attack phase that follows in `run_k8s` never holds a slot.
+    with gate_fn():
+        context, context_configmap, registry_mirror = _prepare_build_context(
+            repo_ref,
+            engagement_id,
+            cluster,
+            dockerfile=dockerfile,
+            resolve_fn=resolve_fn,
+            mirror_fn=mirror_fn,
+        )
+        # Kaniko build → push. Watch to a terminal phase; only Succeeded is a build.
+        cluster.create_build_pod(
+            context=context,
+            destination=destination,
+            dockerfile=dockerfile,
+            context_configmap=context_configmap,
+            registry_mirror=registry_mirror,
+        )
+        outcome = watch_pod(
+            cluster,
+            m.BUILD_POD_NAME,
+            timeout_s=build_timeout_s,
+            poll_interval_s=poll_interval_s,
+            now=now,
+            sleep=sleep,
+        )
     if outcome.timed_out:
         raise ProvisionError("kaniko build timed out")
     if outcome.phase != "Succeeded":

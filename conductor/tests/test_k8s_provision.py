@@ -169,6 +169,64 @@ def test_happy_path_clones_mirrors_and_builds_via_dir_context():
     assert dockerfile == "Dockerfile"
 
 
+def test_build_gate_wraps_only_the_build_steps():
+    """The gate (lever A2) is entered before the build steps and exited after, and
+    only the clone/mirror/Kaniko calls happen while it is held — not registry setup
+    (before) or scope emit (after)."""
+    import contextlib
+
+    events: list = []
+
+    @contextlib.contextmanager
+    def gate_fn():
+        events.append("gate_enter")
+        try:
+            yield
+        finally:
+            events.append("gate_exit")
+
+    class TracingCluster(FakeCluster):
+        def create_registry_pod(self) -> None:
+            events.append("registry_pod")
+            super().create_registry_pod()
+
+        def create_build_context_configmap(self, files, *, name=m.BUILD_CONTEXT_CONFIGMAP):
+            events.append("build_context")
+            return super().create_build_context_configmap(files, name=name)
+
+        def create_build_pod(self, **kw):
+            events.append("build_pod")
+            super().create_build_pod(**kw)
+
+    cluster = TracingCluster({"registry": ["Running"], "build": ["Succeeded"]})
+    _run(cluster, gate_fn=gate_fn)
+
+    # registry setup is outside the gate; clone/mirror/build are inside; the gate
+    # closes before scope emit.
+    assert events.index("registry_pod") < events.index("gate_enter")
+    assert events.index("gate_enter") < events.index("build_context") < events.index("build_pod")
+    assert events.index("build_pod") < events.index("gate_exit")
+
+
+def test_build_gate_released_on_build_failure():
+    """A failed build still exits the gate (context manager), freeing the slot."""
+    import contextlib
+
+    released = []
+
+    @contextlib.contextmanager
+    def gate_fn():
+        try:
+            yield
+        finally:
+            released.append(True)
+
+    cluster = FakeCluster({"registry": ["Running"], "build": ["Failed"]}, build_exit=1)
+    with pytest.raises(ProvisionError):
+        _run(cluster, gate_fn=gate_fn)
+    assert released == [True]  # slot freed despite the failure
+
+
 def test_scope_points_at_target_service_dns_and_port():
     cluster = FakeCluster({"registry": ["Running"], "build": ["Succeeded"]})
     prov = _run(cluster)

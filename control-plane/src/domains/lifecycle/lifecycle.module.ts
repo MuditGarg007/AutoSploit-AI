@@ -46,7 +46,7 @@ export class EngagementWorkerLifecycle implements OnApplicationShutdown {
         new Worker(
           'engagements',
           (job) => worker.process(job),
-          { connection: { url: env.redisUrl }, concurrency: 1 },
+          { connection: { url: env.redisUrl }, concurrency: env.workerConcurrency },
         ),
     },
     EngagementWorkerLifecycle,
