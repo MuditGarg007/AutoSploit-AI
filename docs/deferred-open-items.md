@@ -24,11 +24,13 @@ Triage of the items below into what to act on soon versus what can safely wait.
    Cilium `NetworkPolicy`, Kaniko in-cluster build. Managed microVM (Fly / E2B) was the
    alternative but is rejected — `orchestration.md §3.1` already ruled out microVMs as
    overkill. Step-3 isolation hardening is unblocked.
-3. **~~Set the red-team cadence (H-Q1).~~ DECIDED 2026-09-15 — full GKE pass is a
-   release gate.** The full §7 red-team pass runs on real GKE per release/tag (the H3
-   exit-gate run); the reduced kind pass plus `hardening.spec.ts` stays the per-merge
-   continuous guard. Aligns with §8.4 (GKE deploy already tag/main-gated) and §13
-   ("continuously guarded, not one-time"); lowest GKE cost/time that still gates releases.
+3. **~~Set the red-team cadence (H-Q1).~~ DECIDED 2026-09-15; substrate SUPERSEDED
+   2026-10-06.** The full §7 red-team pass is the release gate. Originally scoped to a
+   real GKE cluster; the isolation decision (item 2) moved the deploy to a self-hosted
+   KVM VPS, so the full pass now runs on that VPS (proven GREEN on Contabo, H3 —
+   `docs/vps-h3-runbook.md §7`). `hardening.spec.ts` stays the per-merge continuous
+   guard; the reduced kind pass is H-Q1 future work (the CI stub was removed). Aligns
+   with §13 ("continuously guarded, not one-time").
 
 ### Can wait
 
@@ -54,12 +56,15 @@ Per the overview §6 build order, the control plane is step 2 and is **done** (C
 the H2 release artifacts and the decided red-team cadence are in the tree and committed,
 not pending:
 - `deploy/helm/control-plane/` — Helm chart (deployment, hpa, service, serviceaccount).
-- `deploy/terraform/main.tf` — GKE Autopilot + Vault + registry.
+- `deploy/terraform/main.tf` — stripped to `vault` + `random` providers only (the GKE
+  Autopilot cluster + registry + GCP IAM were removed when the deploy moved to the
+  self-hosted VPS; the VM is provisioned out-of-band).
 - `scripts/redteam.sh` — the §7 red-team pass (SEAM-1 egress matrix, SEAM-2 secret split).
 - `control-plane/test/hardening.spec.ts` — the H1 seam proofs in CI.
-- `.github/workflows/release.yml` — build→scan→push→GHCR, `redteam-kind` reduced pass per
-  push/tag, `deploy-gke` behind a `production` approval environment, then the full GKE
-  red-team pass as the release gate. **This already implements the H-Q1 cadence decision.**
+- `.github/workflows/release.yml` — build→scan→push→GHCR only. Deploy and the full §7
+  red-team gate are run **manually on the VPS** (`docs/vps-h3-runbook.md §5/§7`); the
+  GKE deploy job and the kind red-team stub were removed. A `deploy-vps` CI job is
+  optional future work (runbook §7.4).
 
 **Remaining milestones:**
 
@@ -77,7 +82,7 @@ not pending:
    Cilium 1.21.0-pre.2) — SEAM-1 egress matrix + SEAM-2 secret split both enforced; two
    latent policy bugs fixed (NXDOMAIN model FQDN `api.openrouter.ai`→`openrouter.ai`; plane
    port 80→backend 3000 for Cilium `toEndpoints`). Self-hosted, not GKE (the decided
-   provider). **Step 3 closed.** The full GKE §7 pass remains as a per-release cadence (H-Q1).
+   provider). **Step 3 closed.** The full §7 pass on the VPS remains a per-release cadence (H-Q1).
 3. **Step 4 — Orchestration at scale.** Job controller, per-engagement teardown, and
    quota under real load. Turns the demo into a platform.
 
@@ -123,11 +128,13 @@ real cluster; the Q1 confirm and isolation-provider decision are both settled ab
 
 ## Security / release (Component H)
 
-- **H-Q1 — full red-team on GKE — DECIDED 2026-09-15: release gate.** The complete §7
-  red-team pass needs a real GKE cluster with the orchestration NetworkPolicy; CI runs a
-  reduced pass on kind. Cadence settled: the full GKE pass runs **per release/tag** (the
-  H3 exit-gate run), with the CI kind pass plus `hardening.spec.ts` as the per-merge
-  continuous guard. Matches §8.4 (GKE deploy is already tag/main-gated) and §13.
+- **H-Q1 — full red-team pass — DECIDED 2026-09-15: release gate; substrate SUPERSEDED
+  2026-10-06 (self-hosted VPS, not GKE).** The complete §7 red-team pass needs a real
+  cluster with the orchestration NetworkPolicy. It now runs **per release/tag on the
+  self-hosted VPS** (`docs/vps-h3-runbook.md §7`; proven GREEN on Contabo, H3), with
+  `hardening.spec.ts` as the per-merge continuous guard. A reduced per-merge kind pass
+  stays future work (the CI stub was removed — it could not stand up Cilium/gVisor on a
+  bare runner). Matches §13.
 
 - **H-Q5 — image supply-chain hardening.** Trivy/scout scan + non-root + pinned base
   images are in scope. **SBOM generation, image signing (cosign), and provenance

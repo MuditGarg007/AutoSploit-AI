@@ -19,7 +19,7 @@ early they never reached the later steps.
 | **Release** | Red | `build-push` (control-plane) Trivy gate; `harness-build-push` GHCR push permission |
 
 The purely mechanical workflow/config bugs are resolved. What remains needs either an
-owner-side setting change, a dependency/base-image decision, or infrastructure (GKE)
+owner-side setting change, a dependency/base-image decision, or infrastructure (the self-hosted VPS cluster)
 that can't be validated from a laptop.
 
 ## Fixes already landed (all pushed to `main`)
@@ -138,13 +138,15 @@ Original analysis below (kept for history):
      patched packages.
 - **Where:** `control-plane/Dockerfile`.
 
-### B4 — Release: `redteam-kind` and `deploy-gke` not yet reached (infra)
+### B4 — Release: deploy / red-team gate (infra) — SUPERSEDED 2026-10-06
 
-- These jobs run after a successful build/push and have never executed in this
-  recovery (the pipeline fails upstream). They need a kind cluster (red-team pass)
-  and GKE credentials / an approval-gated environment (`autosploit-demo`,
-  `us-central1`). They can't be validated from a developer laptop — expect to debug
-  these once B1–B3 are green and secrets/approvals are confirmed.
+- **Both the `redteam-kind` and `deploy-gke` jobs have since been removed from
+  `release.yml`.** The deploy moved to a self-hosted KVM VPS (kind + Cilium + gVisor),
+  which a bare CI runner cannot stand up, so the `helm install` and the full §7
+  red-team gate are now run **manually on the VPS** (`docs/vps-h3-runbook.md §5/§7`;
+  proven GREEN on Contabo, H3). The release workflow is build→scan→push→GHCR only.
+  This B4 item is historical — there is no GKE credential / `autosploit-demo` /
+  `us-central1` dependency any more.
 
 ## How to resume
 
@@ -152,7 +154,7 @@ Original analysis below (kept for history):
    passes. The contracts drift fix is already in; no other CI test is failing.
 2. **Release build/push green:** flip the repo workflow-permissions setting (B2), and
    apply the control-plane base upgrade (B3). Re-run Release.
-3. **Release deploy:** work B4 (kind + GKE) once the image push succeeds.
+3. **Release deploy:** deploy and run the red-team gate manually on the VPS (B4, now historical; docs/vps-h3-runbook.md §5/§7) once the image push succeeds.
 
 ### Verifying a run (don't trust a piped exit code)
 

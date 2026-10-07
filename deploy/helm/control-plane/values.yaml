@@ -40,8 +40,9 @@ probes:
   readinessPath: /health
 
 # External dependencies the plane depends on (Postgres / Redis / Redpanda / Vault /
-# S3). Parameterized as endpoints; managed equivalents on GKE are referenced via the
-# same values. Subcharts for stateful deps are intentionally OUT of scope here —
+# S3). Parameterized as endpoints; on the self-hosted VPS these point at the
+# ops-managed deps stood up in-namespace (docs/vps-h3-runbook.md §5.3), set via
+# `--set external.*`. Subcharts for stateful deps are intentionally OUT of scope here —
 # the orchestration layer and ops own those (§8.2).
 external:
   postgresUrl: postgres://postgres@postgres:5432/control_plane

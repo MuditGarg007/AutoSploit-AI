@@ -72,6 +72,12 @@ def test_build_pod_passes_context_dockerfile_destination_to_kaniko():
         "--destination=registry.engagement.svc/target:latest",
         # Push to the in-cluster HTTP registry (no TLS) — load-bearing for M8.
         "--insecure",
+        # CPU-cut flags (handoff B1): lighter snapshotter + cheap push-side gzip.
+        "--use-new-run",
+        "--snapshot-mode=redo",
+        "--single-snapshot",
+        "--compression-level=1",
+        "--compressed-caching=false",
     ]
 
 

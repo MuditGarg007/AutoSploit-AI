@@ -165,8 +165,11 @@ job controller (overview plane 3), thin at first, richer later.
   story clean.
 - **Multi-service target scope.** Multiple target hosts (app + db + cache each on
   their own Service) is an additive contract change beyond the DNS bump in §4.1.
-- **Managed cloud.** Local **k3s / kind** is the dev substrate. **GKE Autopilot**
-  (or EKS) is the demo substrate, spun up only when needed to keep cost near zero.
+- **Deploy substrate.** Local **kind** is the dev substrate; the demo/prod substrate
+  is a **self-hosted KVM VPS** running the same kind + Cilium + gVisor stack
+  (`docs/vps-h3-runbook.md`). Managed K8s (GKE Autopilot / EKS) was the original demo
+  target but was rejected for self-hosted (`deferred-open-items.md`, item 2): the stack
+  needs a full KVM kernel, eBPF/BTF, and a custom `RuntimeClass` a managed PaaS won't give.
 - **Buildpacks** (overview §2.1 step 3) — still deferred.
 
 ---
@@ -182,16 +185,16 @@ Every entry traces to a requirement above; none is decorative.
 | Isolation | **gVisor** (`RuntimeClass`) | §4 real isolation, drop-in |
 | In-cluster build | **Kaniko** | build untrusted repo without docker socket |
 | Packaging | **Helm** | engagement resources as a chart |
-| IaC | **Terraform** | provision cluster + registry + IAM |
-| CI/CD | **GitHub Actions** | build / scan / push harness image |
+| IaC | **Terraform** | minimal Vault bootstrap (VM provisioned out-of-band) |
+| CI/CD | **GitHub Actions** | build / scan / push harness + control-plane images |
 | Registry | **GHCR** | image distribution |
-| Cloud (demo) | **GKE Autopilot** / EKS | the managed-cloud story |
-| Dev cluster | **k3s / kind** | free local substrate |
+| Deploy substrate | **Self-hosted KVM VPS** (kind + Cilium + gVisor) | demo/prod; managed K8s rejected (`deferred-open-items.md`) |
+| Dev cluster | **kind** | free local substrate |
 | Conductor client | Python **`kubernetes`** client (or client-go) | drive the API from the conductor |
 
 Resulting resume surface, all interview-defensible:
 `Kubernetes · NetworkPolicy · Cilium · gVisor · Kaniko · Helm · Terraform ·
-GitHub Actions · GHCR · GKE`.
+GitHub Actions · GHCR · self-hosted KVM VPS`.
 
 ---
 
@@ -232,7 +235,8 @@ Move the same two roles onto the cluster; add isolation + egress control.
 10. **Control plane (TS)** — auth (GitHub OAuth), Postgres engagement CRUD, Redis
     queue, streaming gateway, repo picker + live dashboard.
 11. **Quotas + teardown-at-scale** — per-user concurrency cap; namespace TTL.
-12. **Managed cloud (demo)** — lift onto GKE Autopilot / EKS.
+12. **Deploy substrate (demo/prod)** — stand the kind + Cilium + gVisor stack up on a
+    self-hosted KVM VPS (`docs/vps-h3-runbook.md`); managed K8s rejected.
 
 Rationale: Phase A proves the core idea (overview §6 step 1) with the least moving
 parts. Phase B is where the DevOps / cloud surface is earned — and it is earned,

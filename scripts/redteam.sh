@@ -151,7 +151,7 @@ ok "no model key in plane logs"
 
 # ---------------------------------------------------------------------------
 # 5. Parity check (covering §5.3) + trace check (§5.4) are asserted by the
-#    hardening.spec suite; the full red-team on GKE re-runs those alongside this
+#    hardening.spec suite; the full red-team on the VPS re-runs those alongside this
 #    network layer.
 # ---------------------------------------------------------------------------
 ok "parity + trace checks covered by hardening.spec (§5.3, §5.4)"

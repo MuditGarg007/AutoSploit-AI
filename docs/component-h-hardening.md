@@ -8,7 +8,17 @@
 > B → C → D → E, with Quota and Hardening riding on top once C and D exist."*). H
 > writes almost no new business logic: it **proves the two security seams the whole
 > design rests on hold under adversarial conditions**, adds the observability spine,
-> and ships the deploy path onto GKE.
+> and ships the deploy path onto a self-hosted KVM VPS.
+
+> **Substrate note (2026-10-06):** this doc was written with **GKE** as the deploy
+> substrate. That decision was **superseded** — the deploy is now a **self-hosted KVM
+> VPS** running kind + Cilium + gVisor (`deferred-open-items.md` item 2;
+> `docs/vps-h3-runbook.md`). H3 was proven GREEN on the Contabo VPS (not GKE). Read
+> every "on GKE" / "GKE deploy" below as "on the self-hosted VPS"; the security seams,
+> red-team pass, and release artifacts are substrate-agnostic and unchanged. The
+> `deploy/terraform/` is stripped to minimal Vault (no GKE cluster/registry/IAM), and
+> `release.yml` builds/scans/pushes to GHCR only — deploy + red-team gate run manually
+> on the VPS (§7 / `vps-h3-runbook.md §5`).
 
 ---
 
@@ -44,8 +54,9 @@ verified*, and the system is deployable, not just runnable.
   single trace from the dispatch HTTP span through the conductor subprocess to the
   ingest span.
 - **Release path.** Dockerfile for the control plane, a Helm chart for the plane's
-  own workloads, Terraform for the GKE cluster + registry + Vault + IAM, and a GH
-  Actions pipeline that builds/scans/pushes to GHCR and deploys.
+  own workloads, minimal Terraform for Vault (the VPS is provisioned out-of-band;
+  cluster/registry stand up via `scripts/m4-bootstrap.sh`), and a GH Actions pipeline
+  that builds/scans/pushes to GHCR; deploy is manual on the VPS.
 
 **Out of scope (owned elsewhere)**
 
@@ -381,19 +392,22 @@ The pass **fails loudly** on any deviation; a green run is the exit-gate evidenc
 
 ### 8.3 Terraform
 
-`deploy/terraform/`: GKE Autopilot cluster (`orchestration.md §7` demo substrate),
-GHCR pull config, Vault + Transit engine + policy + k8s auth role
-(`control-plane.md §9.1`), object-store bucket (S3/MinIO for Reports + the Connect
-sink), IAM/service accounts. Cluster spun up only when demoing to keep cost near zero
-(`orchestration.md §7`).
+`deploy/terraform/main.tf`: stripped to **`vault` + `random` providers only** — Vault
++ Transit engine + policy + k8s auth role (`control-plane.md §9.1`). The GKE Autopilot
+cluster / GHCR config / object-store bucket / GCP IAM that this section originally
+described were **removed** when the deploy moved to the self-hosted VPS: the VM is
+provisioned out-of-band (panel / cloud-init), the cluster stands up via
+`scripts/m4-bootstrap.sh`, and report blobs go to Cloudflare R2 (`vps-h3-runbook.md §3`).
 
 ### 8.4 CI/CD (extends `.github/workflows/ci.yml`)
 
 The existing `ci.yml` runs build + test + lint + typecheck on real Postgres via
 Testcontainers. H adds a **release workflow**:
-- On tag / main: build the image, scan (§8.1), push to **GHCR**.
-- Run the reduced red-team pass (§7) against an ephemeral kind cluster in CI.
-- Deploy to GKE via Helm (manual approval gate for prod).
+- On tag / main: build the control-plane + harness images, scan (§8.1), push to **GHCR**.
+- Deploy and the full §7 red-team gate run **manually on the self-hosted VPS**
+  (`vps-h3-runbook.md §5/§7`) — a bare CI runner cannot stand up Cilium/gVisor. The
+  reduced in-CI kind pass and a `deploy-vps` job are optional future work (the earlier
+  stubs were removed).
 
 ---
 
@@ -435,7 +449,7 @@ note.
 
 - `control-plane/Dockerfile` — multi-stage build → Node 22 runtime (§8.1).
 - `deploy/helm/control-plane/` — the plane's chart (§8.2).
-- `deploy/terraform/` — GKE + Vault + registry + IAM (§8.3).
+- `deploy/terraform/` — minimal Vault only; GKE cluster/registry/IAM removed (§8.3).
 - `control-plane/test/redteam/` (or `scripts/redteam.sh`) — the red-team pass (§7).
 - `control-plane/test/hardening.spec.ts` — the proofs runnable in CI (§5, §11).
 - `.github/workflows/release.yml` — build/scan/push/deploy + reduced red-team (§8.4).
@@ -506,7 +520,7 @@ route param / body shapes; the trace-context propagation round-trip through
    secret-split (both directions), leak scanner, Phase-B parity, end-to-end trace.
    Demo: `bun run test` is green and would go **red** on any seam regression.
 3. **H2 — release artifacts.** Dockerfile + image scan, the control-plane Helm
-   chart, Terraform for GKE + Vault + registry, the release workflow. Demo: the
+   chart, minimal Terraform for Vault, the release workflow. Demo: the
    plane deploys to a cluster from a pushed image.
 4. **H3 — the red-team pass on GKE.** Run the full §7 pass against a real GKE deploy
    with the real NetworkPolicy (`orchestration.md §4`). **This is the exit-gate

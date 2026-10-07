@@ -1,10 +1,11 @@
 name: Release
 
 # Component H release path (docs/component-h-hardening.md §8.4): build + scan the
-# control-plane image, push to GHCR, run the reduced red-team pass against an
-# ephemeral kind cluster, then deploy to GKE via Helm (manual approval before prod).
-# Runs on tags (v*) and on pushes to main; the deploy step is gated by an
-# environment with an approval rule.
+# control-plane and harness images and push them to GHCR. Deploy is NOT done here:
+# the backend runs on a self-hosted KVM VPS (kind + Cilium + gVisor), and both the
+# `helm install` and the H3 red-team gate are run manually on that box per
+# docs/vps-h3-runbook.md (§5 deploy, §7 red-team). GKE was the demo substrate only
+# and has been removed. Runs on tags (v*) and on pushes to main.
 
 on:
   push:
@@ -15,14 +16,11 @@ on:
 permissions:
   contents: read
   packages: write # push to GHCR
-  id-token: write # OIDC to authenticate to GKE
 
 env:
   REGISTRY: ghcr.io
   IMAGE: ghcr.io/muditgarg007/control-plane
   HARNESS_IMAGE: ghcr.io/muditgarg007/harness
-  GKE_CLUSTER: autosploit-demo
-  GKE_REGION: us-central1
 
 jobs:
   build-push:
@@ -75,7 +73,8 @@ jobs:
             -f control-plane/Dockerfile -t $IMAGE:$GITHUB_SHA -t $IMAGE:latest --push .
 
   # Roadmap M5 role 1: build, scan, and push the attacker HARNESS image and emit its
-  # digest, so the conductor pulls it by digest (deploy-gke consumes the output). Same
+  # digest, so the conductor pulls it by digest (the manual VPS deploy consumes the
+  # output as AUTOSPLOIT_HARNESS_IMAGE, docs/vps-h3-runbook.md §4.1). Same
   # build-scan-leak-push shape as the control-plane build-push job above; the leak scan
   # targets the key VALUE shape because the harness ships Python source where the
   # env-var NAME legitimately appears (docs/m5-phases.md Phase 1).
@@ -131,70 +130,20 @@ jobs:
           echo "harness image digest: $digest_ref"
           echo "digest=$digest_ref" >> "$GITHUB_OUTPUT"
 
-  redteam-kind:
-    runs-on: ubuntu-latest
-    needs: build-push
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with: { bun-version: 1.4.0 }
-      - name: Install kind
-        run: |
-          curl -Lo kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
-          chmod +x kind && sudo mv kind /usr/local/bin/
-      - name: Create cluster
-        run: |
-          kind create cluster --name autosploit-cicd
-          # kind returns once the API server answers, but the ServiceAccount
-          # controller may not have created the default/default SA yet. The
-          # red-team probe pod defaults to that SA, and pod admission is rejected
-          # with "serviceaccount default not found" until it exists. Wait for it.
-          for i in $(seq 1 30); do
-            kubectl -n default get serviceaccount default >/dev/null 2>&1 && break
-            echo "waiting for default serviceaccount ($i)…"; sleep 2
-          done
-          kubectl -n default get serviceaccount default
-      - name: Reduced red-team pass
-        run: ./scripts/redteam.sh --namespace default --ingest-token "${{ secrets.INGEST_TOKEN_SIGNING_KEY }}"
-
-  deploy-gke:
-    runs-on: ubuntu-latest
-    needs: [build-push, harness-build-push, redteam-kind]
-    # Gate prod deploys behind a manual approval environment.
-    environment: production
-    concurrency: production
-    env:
-      # M5: the digest-pinned attacker harness ref the conductor launches by digest.
-      # The conductor reads this via its `_run_k8s` seam (docs/m5-phases.md Phase 3)
-      # and threads it to the engagement chart's `attacker.image`. Sourced from the
-      # scanned+pushed harness-build-push job so prod never launches an unpinned image.
-      AUTOSPLOIT_HARNESS_IMAGE: ${{ needs.harness-build-push.outputs.digest }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Auth to GCP
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/autosploit/providers/github
-          service_account: autosploit-plane-github@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com
-
-      - name: Get GKE credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: ${{ env.GKE_CLUSTER }}
-          location: ${{ env.GKE_REGION }}
-
-      - name: Deploy with Helm
-        run: |
-          helm upgrade --install control-plane ./deploy/helm/control-plane \
-            --namespace default \
-            --set image.tag=$GITHUB_SHA \
-            --set image.repository=$IMAGE
-
-      - name: Full red-team pass on GKE (release gate)
-        run: |
-          # Wait for rollout, then run the full §7 pass against the real
-          # NetworkPolicy + ingest.
-          kubectl rollout status deployment/control-plane-control-plane-app --timeout=300s
-          INGEST_TOKEN="${{ secrets.INGEST_TOKEN_SIGNING_KEY }}" \
-            ./scripts/redteam.sh --namespace default
+  # NOTE: there is no deploy job in CI. The backend runs on a self-hosted KVM VPS
+  # (kind + Cilium + gVisor), which cannot be stood up on a bare ubuntu-latest
+  # runner — it needs a full KVM kernel, eBPF/BTF, gVisor host binaries, and the
+  # kernel-pinned Cilium build from scripts/m4-bootstrap.sh. So both the deploy
+  # (`helm install`, docs/vps-h3-runbook.md §5) and the full §7 red-team gate are
+  # run manually on the VPS; the red-team pass is proven GREEN on Contabo (H3,
+  # 2026-10-06). The reduced kind pass that once stubbed this stage was removed
+  # for the same reason and stays H-Q1 future work.
+  #
+  # The digest-pinned attacker harness ref emitted by harness-build-push
+  # (needs.harness-build-push.outputs.digest) is the AUTOSPLOIT_HARNESS_IMAGE the
+  # conductor launches by digest (docs/m5-phases.md Phase 3) during that manual run.
+  #
+  # Optional future work (docs/vps-h3-runbook.md §7.4): a `deploy-vps` job that
+  # SSHes to the box, runs the bootstrap + `helm install`, then runs redteam.sh
+  # over the remote context as the release gate — add only after the first
+  # reproducibly-green manual pass.

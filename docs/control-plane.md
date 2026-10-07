@@ -274,7 +274,7 @@ one.
 | ORM / migrations | **Drizzle** (`drizzle-kit`) | SQL-first typed access + row-level user scoping; migrations in CI. Wrapped in a `DrizzleModule` provider |
 | DB | Postgres | multi-tenant system of record |
 | Queue | BullMQ (Redis) | durable dispatch → worker, retries, concurrency caps |
-| **Event backbone** | **Redpanda** (Kafka API) | durable, replayable system-of-record log; independent consumer groups partitioned by `engagement_id` (§8.2). Single binary, no ZooKeeper — light enough for a personal GKE deploy |
+| **Event backbone** | **Redpanda** (Kafka API) | durable, replayable system-of-record log; independent consumer groups partitioned by `engagement_id` (§8.2). Single binary, no ZooKeeper — light enough for a personal self-hosted VPS deploy |
 | Stream contract | **Schema Registry** (Redpanda built-in) | broker-enforces the frozen `harness/contracts/` event schema across the Python↔TS border (§8.1) |
 | Stream sink | **Kafka Connect** — S3 sink | archives raw events to the object store, no custom archiver |
 | Stream processing | **Kafka Streams** (or ksqlDB) | cost/findings rollups feeding the quota meter (§5) |
@@ -285,7 +285,7 @@ one.
 | Contract validation | Schema Registry (broker) + generated TS types | conformance enforced at the broker, types generated for consumers from the same schema |
 | Observability | OpenTelemetry · Prometheus · Grafana · Pino | domain-native: trace dispatch → provision → attack → ingest correlated by `engagement_id` |
 | Testing | Vitest · Supertest · Testcontainers | real Postgres/Redis in CI, not mocks |
-| Platform | Docker · GKE · Helm · Terraform · GH Actions → GHCR | shared with `orchestration.md §3`; each primitive maps to a requirement |
+| Platform | Docker · self-hosted KVM VPS (kind) · Helm · Terraform · GH Actions → GHCR | shared with `orchestration.md §3`; each primitive maps to a requirement |
 
 Two integration wrinkles, both by design:
 
@@ -508,7 +508,7 @@ Split into two gates so the dashboard is not blocked on the broker.
     + GH Actions → GHCR deploy.
 - **Exit gate.** A red-team pass confirms no inbound path from sandbox to plane other
   than ingest, no secret leaks into logs/harness, and a full dispatch→provision→attack→
-  ingest trace is correlated by `engagement_id` on a GKE deploy.
+  ingest trace is correlated by `engagement_id` on the self-hosted VPS deploy (docs/vps-h3-runbook.md).
 
 ---
 
@@ -524,7 +524,7 @@ Split into two gates so the dashboard is not blocked on the broker.
 | D-b | Telemetry (durable) | Consumer groups | Tables rebuildable by topic replay; audit + S3 sink |
 | E | Reports | Report assembly | Report + presigned artifacts served to owner |
 | Q | Quota | Cap enforcement | Over-cap create rejected at dispatch from live totals |
-| H | Hardening | Seams + deploy | Red-team: only ingest inbound, no secret leaks, traced on GKE |
+| H | Hardening | Seams + deploy | Red-team: only ingest inbound, no secret leaks, traced on the self-hosted VPS |
 
 **P3 + P4a are the spine** — where "many engagements, streamed live" becomes real and
 demoable. D-b, Q, and H are where the event-sourcing / security story pays off.

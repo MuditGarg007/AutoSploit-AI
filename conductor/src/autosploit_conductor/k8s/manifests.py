@@ -361,6 +361,24 @@ def kaniko_build_pod_manifest(
             # the registry Service and the push fails. Push-side only; base-image
             # pulls from a real registry still use TLS.
             "--insecure",
+            # CPU-cut flags (handoff B1): the build is the one CPU-heavy stretch of
+            # an engagement on the single 4-vCPU box, and layer snapshotting +
+            # push-side gzip are the hot paths. These shave that CPU without
+            # changing what gets built or pushed:
+            #  - --use-new-run + --snapshot-mode=redo: drop the full-filesystem-walk
+            #    snapshot in favour of the lighter redo snapshotter;
+            #  - --single-snapshot: one layer, less diffing (fine for the
+            #    single-stage Dockerfile targets this MVP builds);
+            #  - --compression-level=1: layer gzip on push is the push-side CPU hog;
+            #    level 1 is a large cut vs the default with negligible size change
+            #    for an image pushed to a same-node in-cluster registry;
+            #  - --compressed-caching=false: skip compressing cached layers in
+            #    memory — less CPU and RAM.
+            "--use-new-run",
+            "--snapshot-mode=redo",
+            "--single-snapshot",
+            "--compression-level=1",
+            "--compressed-caching=false",
         ],
     }
     if registry_mirror is not None:

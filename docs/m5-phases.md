@@ -81,8 +81,10 @@ digest, exactly mirroring the control-plane `build-push` job.
   `harness-build-push` job mirroring `build-push` (`:27-61`): login → build → Trivy
   HIGH/CRITICAL → leak scan (value shape `sk-or-…`, see Phase 1) → push. A `push` step captures the pushed digest into
   `$GITHUB_OUTPUT`; declare `outputs.digest`.
-- Wire `deploy-gke` (`:79-105`) to `needs` the new job and set the conductor Deployment
-  env `AUTOSPLOIT_HARNESS_IMAGE` to the digest output.
+- The `harness-build-push` digest output is consumed as `AUTOSPLOIT_HARNESS_IMAGE` by
+  the **manual VPS deploy** (`docs/vps-h3-runbook.md §4.1`), which the conductor threads
+  to the engagement chart's `attacker.image`. (The old `deploy-gke` CI job that once
+  consumed this output was removed when the deploy moved to the self-hosted VPS.)
 
 **Verify**
 - `actionlint .github/workflows/release.yml` (or GitHub's workflow linter) — no errors.
