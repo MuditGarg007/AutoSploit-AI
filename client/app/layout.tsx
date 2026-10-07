@@ -26,8 +26,8 @@ export const metadata: Metadata = {
   title,
   description,
   applicationName: "AutoSploit AI",
-  // app/favicon.ico is picked up automatically; the og/twitter images come from
-  // app/opengraph-image.tsx via the file-based metadata API.
+  // app/icon.png (a circular favicon) is picked up automatically; the og/twitter
+  // images come from app/opengraph-image.tsx via the file-based metadata API.
   openGraph: {
     type: "website",
     siteName: "AutoSploit AI",
