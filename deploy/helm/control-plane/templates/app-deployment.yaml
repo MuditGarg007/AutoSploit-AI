@@ -78,7 +78,34 @@ spec:
               value: {{ .Values.external.s3Endpoint | quote }}
             - name: S3_BUCKET
               value: {{ .Values.external.s3Bucket | quote }}
+            # Conductor execution (engagement-pipeline handoff #2, architecture A).
+            # The worker shells `conductor run [--k8s --target-port]`; the fat image
+            # bundles the conductor + python + git + crane + helm + engagement chart.
+            - name: CONDUCTOR_K8S
+              value: {{ .Values.conductor.k8s | quote }}
+            - name: CONDUCTOR_DEFAULT_TARGET_PORT
+              value: {{ .Values.conductor.defaultTargetPort | quote }}
+            - name: CONDUCTOR_TIMEOUT_S
+              value: {{ .Values.conductor.timeoutS | quote }}
+            - name: CONDUCTOR_OUT_DIR
+              value: {{ .Values.conductor.outDir | quote }}
+            - name: AUTOSPLOIT_ENGAGEMENT_CHART
+              value: {{ .Values.conductor.engagementChart | quote }}
+            {{- with .Values.conductor.harnessImage }}
+            - name: AUTOSPLOIT_HARNESS_IMAGE
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.secretRef }}
+            # Conductor model key (architecture A): the conductor runs in this pod,
+            # so OPENROUTER_API_KEY is injected here by name. optional:true so the
+            # app still boots if the key is absent (the conductor fails the run, not
+            # boot); see values.yaml OPENROUTER note on the relaxed §6 split.
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: OPENROUTER_API_KEY
+                  optional: true
             # Secrets referenced by name only — nothing is inlined in the chart.
             - name: INGEST_TOKEN_SIGNING_KEY
               valueFrom:

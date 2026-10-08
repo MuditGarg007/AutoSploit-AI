@@ -15,6 +15,9 @@ export interface EngagementJobData {
   // persisted to Postgres or Redis, never logged.
   githubToken: string;
   ingestToken: string;
+  // Target scope port for the conductor's --k8s path. Absent when the create
+  // request omitted it; the worker then falls back to CONDUCTOR_DEFAULT_TARGET_PORT.
+  targetPort?: number;
   timeoutS: number;
   // W3C traceparent of the dispatch span, carried on the job so the async hop
   // from HTTP dispatch to worker execution stays in one trace

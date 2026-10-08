@@ -20,6 +20,17 @@ export class EnvService {
   // the surviving conductor.json record lives at <out>/<id>/conductor.json.
   readonly conductorOutDir = process.env.CONDUCTOR_OUT_DIR ?? '/tmp/autosploit-runs';
   readonly conductorTimeoutS = Number(process.env.CONDUCTOR_TIMEOUT_S ?? 3600);
+  // Run the conductor against the Kubernetes cluster (Phase B, `conductor run
+  // --k8s --target-port <p>`) instead of local docker subprocesses (Phase A).
+  // Off by default so dev/tests keep the Phase A argv; the prod Helm chart sets it
+  // true (the plane image bundles conductor + a k8s-capable ServiceAccount).
+  readonly conductorK8s = (process.env.CONDUCTOR_K8S ?? 'false') === 'true';
+  // Fallback scope port for `--k8s` when the create request omitted targetPort.
+  // --k8s requires a port; this keeps a port-less engagement runnable rather than
+  // failing it (the per-engagement targetPort on the job takes precedence).
+  readonly conductorDefaultTargetPort = Number(
+    process.env.CONDUCTOR_DEFAULT_TARGET_PORT ?? 5000,
+  );
   // How many engagements the BullMQ worker runs end to end at once (capacity lever
   // A1, docs/capacity-cpu-handoff.md). The attack phase is network-bound (~0 CPU),
   // so engagements overlap comfortably; the default 3 uses the otherwise-idle cores

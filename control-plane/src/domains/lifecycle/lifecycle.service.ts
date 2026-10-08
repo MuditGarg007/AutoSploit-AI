@@ -51,6 +51,10 @@ export interface DispatchInput {
   // repoId is the whole contract: probeDeployable resolves the authoritative
   // fullName from it (a client-supplied fullName was never read — removed).
   repoId: number;
+  // Optional target port forwarded to the conductor's --k8s path (validated at
+  // the controller). Persisted on the row and carried on the job; the worker
+  // falls back to CONDUCTOR_DEFAULT_TARGET_PORT when absent.
+  targetPort?: number;
 }
 
 export interface DispatchResult {
@@ -97,7 +101,11 @@ export class LifecycleService {
 
     const row = await this.db
       .insert(engagements)
-      .values({ userId: input.userId, repoFullName: probe.fullName })
+      .values({
+        userId: input.userId,
+        repoFullName: probe.fullName,
+        targetPort: input.targetPort ?? null,
+      })
       .returning();
     const engagement = row[0];
 
@@ -107,6 +115,7 @@ export class LifecycleService {
       repoRef: probe.fullName,
       githubToken,
       ingestToken,
+      targetPort: engagement.targetPort ?? undefined,
       timeoutS: this.env.conductorTimeoutS,
       // Carry the dispatch span's W3C context to the worker so the BullMQ hop
       // stays in one trace (§6.2). Absent when no root span is active.

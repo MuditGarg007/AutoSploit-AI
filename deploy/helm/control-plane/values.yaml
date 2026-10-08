@@ -1,7 +1,15 @@
 # Values for the control-plane chart (docs/component-h-hardening.md §8.2). Secrets
 # are injected at deploy time via Vault k8s auth or k8s Secrets — NEVER baked into
-# the image (§8.1). OPENROUTER_API_KEY is deliberately unsettable here: it is the
-# conductor's key and must never live in the plane (the CI leak scanner guards this).
+# the image (§8.1).
+#
+# OPENROUTER_API_KEY: the engagement-pipeline fat-image path (handoff #2,
+# architecture A) runs the conductor IN-PROCESS inside the plane pod, so the
+# conductor's model key must now be injected into this pod's env. It is referenced
+# by secretKeyRef (key OPENROUTER_API_KEY in secretRef.name) — never inlined here
+# and never baked into the image. This relaxes the §6 secret-split (SEAM-2) by
+# design. NOTE: a CI leak scanner previously asserted the key never appears in
+# plane config; that check must be updated for architecture A or it will fail this
+# chart. Reverting to the separate-conductor-Job design restores the strict split.
 
 image:
   repository: ghcr.io/autosploit/control-plane
@@ -86,6 +94,38 @@ env:
 # local vault). Values come from an external Secret name, never committed.
 secretRef:
   name: control-plane-secrets
+
+# Conductor execution (engagement-pipeline handoff #2, architecture A). The worker
+# shells `conductor run` as a subprocess; the fat image bundles the conductor +
+# python + git + crane + helm + the engagement chart.
+conductor:
+  # Drive the cluster (conductor run --k8s) rather than local docker. MUST be true
+  # in k8s (no docker socket in the pod); false keeps the Phase A dev/test argv.
+  k8s: true
+  # Fallback scope port passed to --target-port when a create request omits
+  # targetPort (the per-engagement value takes precedence).
+  defaultTargetPort: 5000
+  # Timeout (s) for a whole engagement run (CONDUCTOR_TIMEOUT_S).
+  timeoutS: 3600
+  # Writable base --out dir; the record lands at <outDir>/<id>/conductor.json. /tmp
+  # is writable by the non-root runtime user and needs no extra volume.
+  outDir: /tmp/autosploit-runs
+  # Digest-pinned attacker harness image for the engagement (AUTOSPLOIT_HARNESS_IMAGE).
+  # Empty falls back to the conductor's built-in placeholder default. Set per deploy,
+  # e.g. `--set conductor.harnessImage=ghcr.io/<owner>/harness@sha256:...`.
+  harnessImage: ""
+  # Path to the per-engagement Helm chart inside the image (AUTOSPLOIT_ENGAGEMENT_CHART).
+  # The image already bakes this default; override only if relocated.
+  engagementChart: /app/engagement-chart
+
+# RBAC for the conductor's --k8s path. When conductor.k8s is true the plane's
+# ServiceAccount needs cluster-wide permission to create/tear down per-engagement
+# namespaces and their workloads (namespaces, pods, pods/log, services, secrets,
+# configmaps) plus the CiliumNetworkPolicy CRD (SEAM-1 egress). This is broad power
+# granted to the internet-facing app — the accepted tradeoff of architecture A.
+rbac:
+  # Create the engagement-ops ClusterRole + binding. Keep in sync with conductor.k8s.
+  engagementOps: true
 
 serviceAccount:
   create: true

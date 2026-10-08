@@ -104,6 +104,16 @@ export class EngagementWorker {
     signal: AbortSignal,
   ): Promise<void> {
     const { engagementId, repoRef, githubToken, ingestToken, timeoutS } = job;
+    // Phase B (prod): drive the cluster. --k8s requires a scope port; use the
+    // per-engagement targetPort, else the configured fallback. Phase A (dev/tests,
+    // conductorK8s=false) keeps the original local-subprocess argv.
+    const k8sArgs = this.env.conductorK8s
+      ? [
+          '--k8s',
+          '--target-port',
+          String(job.targetPort ?? this.env.conductorDefaultTargetPort),
+        ]
+      : [];
     // The conductor creates <out>/<engagement-id>/; the surviving conductor.json
     // record lives at <out>/<engagement-id>/conductor.json (§ record.py).
     const outBase = this.env.conductorOutDir;
@@ -139,6 +149,7 @@ export class EngagementWorker {
         outBase,
         '--timeout-s',
         String(timeoutS),
+        ...k8sArgs,
         ...(traceparent ? ['--traceparent', traceparent] : []),
       ],
       {

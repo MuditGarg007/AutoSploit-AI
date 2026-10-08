@@ -1,4 +1,11 @@
-import { pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 // Slice C owns engagements and is its SOLE writer — the single system of record,
 // replacing the conductor's conductor.json (docs/control-plane.md §4.C, §7).
@@ -23,6 +30,12 @@ export const engagements = pgTable('engagements', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id').notNull(),
   repoFullName: text('repo_full_name').notNull(),
+  // Port the built target listens on, supplied at create time. The conductor's
+  // --k8s path REQUIRES it (a Dockerfile repo does not reliably declare a port,
+  // so the operator supplies the scope port the attacker may reach). Nullable:
+  // optional at the API, and the worker falls back to CONDUCTOR_DEFAULT_TARGET_PORT
+  // when absent (docs/control-plane.md §4.C, conductor cli.py --target-port).
+  targetPort: integer('target_port'),
   state: engagementState('state').notNull().default('queued'),
   haltReason: text('halt_reason'),
   failReason: text('fail_reason'),

@@ -18,6 +18,13 @@ conductor/runs
 .git
 .github
 docs
-deploy
 scripts
 k8s
+# deploy/ is excluded EXCEPT the per-engagement Helm chart, which the control-plane
+# fat image bakes in for the conductor's --k8s path (control-plane/Dockerfile ships
+# it at /app/engagement-chart). Exclude-then-negate level by level so the chart
+# survives the context strip on every builder (not just BuildKit).
+deploy/*
+!deploy/helm
+deploy/helm/*
+!deploy/helm/engagement

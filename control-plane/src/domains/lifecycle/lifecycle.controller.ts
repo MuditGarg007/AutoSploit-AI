@@ -24,6 +24,11 @@ export interface CreateEngagementDto {
   // caps are per-user operator config enforced by the quota layer
   // (docs/component-q-quota.md §2), not client input.
   repoId: number;
+  // Port the built target listens on, forwarded to `conductor run --k8s
+  // --target-port` as the scope port the attacker may reach. Optional: the worker
+  // falls back to CONDUCTOR_DEFAULT_TARGET_PORT when omitted. A present value must
+  // be a valid TCP port (1–65535).
+  targetPort?: number;
 }
 
 // POST /engagements, GET /engagements, GET /engagements/:id,
@@ -46,9 +51,24 @@ export class LifecycleController {
     if (typeof body?.repoId !== 'number' || !Number.isInteger(body.repoId)) {
       throw new BadRequestException('repoId must be an integer');
     }
+    // targetPort is optional, but if present it must be a valid TCP port — a bad
+    // value must be a 400 here, not a confusing downstream conductor failure.
+    if (body.targetPort !== undefined) {
+      if (
+        typeof body.targetPort !== 'number' ||
+        !Number.isInteger(body.targetPort) ||
+        body.targetPort < 1 ||
+        body.targetPort > 65535
+      ) {
+        throw new BadRequestException(
+          'targetPort must be an integer between 1 and 65535',
+        );
+      }
+    }
     return this.lifecycle.dispatch({
       userId: auth.id,
       repoId: body.repoId,
+      targetPort: body.targetPort,
     });
   }
 

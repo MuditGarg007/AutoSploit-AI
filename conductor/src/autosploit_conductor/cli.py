@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from autosploit_conductor.context import ConductorError
+from autosploit_conductor.run import run
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -26,10 +27,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.k8s:
             result, record_path = _run_k8s(args)
         else:
-            # Lazy import: the Phase A path pulls in the provisioner teardown,
-            # so importing the CLI (and the Phase B path) doesn't depend on it.
-            from autosploit_conductor.run import run
-
             result, record_path = run(
                 args.repo,
                 engagement_id=args.engagement_id,
@@ -124,6 +121,14 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         type=float,
         default=None,
         help="wall-clock timeout for the whole run (provision + harness); generous by default",
+    )
+    run_p.add_argument(
+        "--traceparent",
+        default=None,
+        help="W3C traceparent of the dispatching span (control-plane hop, §6.2). "
+        "Accepted so the plane can continue one trace across the subprocess hop; "
+        "it is also passed as the TRACEPARENT env var, which is the channel the "
+        "harness reads, so this flag is recorded but otherwise inert here.",
     )
     run_p.add_argument(
         "--k8s",
