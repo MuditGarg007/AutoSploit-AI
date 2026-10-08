@@ -115,6 +115,16 @@ spec:
                 secretKeyRef:
                   name: {{ .name }}
                   key: VAULT_TRANSIT_KEY
+            # Static Vault token for the dev/no-k8s-auth path. Optional: absent in
+            # prod, where VaultService authenticates with the pod ServiceAccount
+            # (§9.1). When present (dev Vault, docs/vps-vault-oauth-handoff.md
+            # Path A), VaultService uses it as the client token.
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: VAULT_TOKEN
+                  optional: true
             {{- end }}
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}
