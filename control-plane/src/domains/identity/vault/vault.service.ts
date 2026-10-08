@@ -34,13 +34,21 @@ export class VaultService implements OnModuleInit {
     if (process.env.KUBERNETES_SERVICE_HOST) {
       try {
         const jwt = await readFile(K8S_SA_TOKEN_PATH, 'utf8');
+        // mount_point is required: node-vault builds the login path from the call
+        // args, not the client config, so without it the path collapses to
+        // `auth/login` and Vault answers 404 "no handler for route". With it the
+        // path is the expected `auth/kubernetes/login`.
         const { auth } = await this.client.kubernetesLogin({
           role: 'control-plane',
           jwt,
+          mount_point: 'kubernetes',
         });
         return auth?.client_token ?? '';
-      } catch {
-        this.logger.warn('k8s Vault auth failed, falling back to VAULT_TOKEN');
+      } catch (err) {
+        // Surface the cause — a silent catch hid a fixable 404 for a long time.
+        this.logger.warn(
+          `k8s Vault auth failed, falling back to VAULT_TOKEN: ${(err as Error).message}`,
+        );
       }
     }
     return this.env.vaultToken;

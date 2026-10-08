@@ -95,12 +95,20 @@ echo "== restart the app so it re-attempts k8s auth =="
 kubectl -n "$NS" rollout restart deploy/control-plane-control-plane-app
 kubectl -n "$NS" rollout status  deploy/control-plane-control-plane-app --timeout=120s
 
-echo "== verify: expect NO 'k8s Vault auth failed' in the new pod's logs =="
-sleep 3
-if kubectl -n "$NS" logs -l app=control-plane --tail=100 \
-   | grep -q "k8s Vault auth failed"; then
-  echo "!! still falling back to VAULT_TOKEN — check role name, SA binding, and the"
-  echo "   auth-delegator ClusterRoleBinding (RBAC_FILE=$RBAC_FILE)."
+echo "== verify: the NEW pod should not log 'k8s Vault auth failed' =="
+# Target the newest pod by name: a label selector also matches the old,
+# terminating replica during the rollout, and `logs` can race the new pod's
+# startup flush — both of which made an earlier version report a false OK.
+NEWPOD="$(kubectl -n "$NS" get pod -l app=control-plane \
+  --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')"
+echo "   checking pod $NEWPOD"
+sleep 15 # the k8s-auth attempt + any warn are logged within ~2s of boot
+if kubectl -n "$NS" logs "$NEWPOD" --tail=200 | grep -q "k8s Vault auth failed"; then
+  echo "!! $NEWPOD still falls back to VAULT_TOKEN. The Vault side is likely fine if a"
+  echo "   manual 'vault write auth/kubernetes/login role=${ROLE} jwt=<pod SA token>'"
+  echo "   succeeds — in that case the warn names the real cause (the app logs the error"
+  echo "   message). Otherwise re-check the role, the SA binding, and the auth-delegator"
+  echo "   ClusterRoleBinding (RBAC_FILE=$RBAC_FILE)."
   exit 1
 fi
-echo "OK: control-plane authenticated to Vault via its ServiceAccount (Path B)."
+echo "OK: $NEWPOD authenticated to Vault via its ServiceAccount (Path B)."
