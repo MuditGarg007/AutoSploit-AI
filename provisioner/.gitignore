@@ -1,7 +1,9 @@
 # Python-generated files
 __pycache__/
 *.py[oc]
-build/
+# anchor to repo root so the setuptools artifact dir is ignored but the
+# src/autosploit_provisioner/build/ source package is NOT (see handoff #4)
+/build/
 dist/
 wheels/
 *.egg-info
