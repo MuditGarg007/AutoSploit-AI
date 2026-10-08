@@ -158,6 +158,19 @@ def test_apply_network_policy_creates_cilium_crd_in_namespace():
     assert call["body"]["spec"]["endpointSelector"] == {}
 
 
+def test_apply_build_egress_policy_creates_build_scoped_cilium_crd():
+    api = FakeCoreV1()
+    EngagementCluster(api, ID).apply_build_egress_policy()
+    call = next(
+        kw for name, kw in api.calls if name == "create_namespaced_custom_object"
+    )
+    assert call["plural"] == "ciliumnetworkpolicies"
+    assert call["namespace"] == NS
+    assert call["body"]["metadata"]["name"] == "build-egress"
+    # Scoped to the build Pod only — must NOT be the whole-namespace empty selector.
+    assert call["body"]["spec"]["endpointSelector"]["matchLabels"]["role"] == "build"
+
+
 def test_apply_network_policy_uses_injected_custom_api():
     # When a separate CustomObjectsApi is injected, the CRD goes there, not to the
     # CoreV1 api (mirrors production: CoreV1Api + CustomObjectsApi are distinct).

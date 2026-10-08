@@ -139,6 +139,23 @@ class EngagementCluster:
             body=m.network_policy_manifest(self.engagement_id, **overrides),
         )
 
+    def apply_build_egress_policy(self, **overrides: Any) -> None:
+        """Apply the build-scoped egress CiliumNetworkPolicy (package mirrors).
+
+        Additive on top of `apply_network_policy`, scoped to `role=build` only, so
+        the Kaniko build Pod's `RUN` steps reach the public package mirrors while the
+        attacker/target egress is untouched (SEAM-1 intact). Must run BEFORE the
+        build Pod so there is no unpoliced window; a failure fails the build closed.
+        `overrides` pass through to `build_egress_policy_manifest` (fqdns / ports).
+        """
+        self._custom.create_namespaced_custom_object(
+            group=_CILIUM_GROUP,
+            version=_CILIUM_VERSION,
+            namespace=self.namespace,
+            plural=_CILIUM_PLURAL,
+            body=m.build_egress_policy_manifest(self.engagement_id, **overrides),
+        )
+
     # --- attacker-side objects (trusted: hold/reference the key) -------------
 
     def apply_secret(self, api_key: str) -> None:

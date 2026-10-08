@@ -132,6 +132,41 @@ CILIUM_NETWORK_POLICY_KIND = "CiliumNetworkPolicy"
 NETWORK_POLICY_NAME = "attacker-egress"
 NAMESPACE_LABEL = "k8s:io.kubernetes.pod.namespace"
 
+# --- build egress (scoped to the Kaniko build Pod only) ----------------------
+#
+# A target Dockerfile's `RUN` steps (`pip install`, `apt-get install`, …) need the
+# public package mirrors, which the namespace-wide default-deny egress (the M7
+# `attacker-egress` policy above) blocks — so Kaniko exits 100 (owner sign-off,
+# 2026-10-09). We grant that egress via a SEPARATE CiliumNetworkPolicy whose
+# `endpointSelector` matches `role=build` ONLY. Cilium egress is additive across
+# policies, so this widens the build Pod's allow-set WITHOUT touching the
+# attacker/target: they stay on the namespace-wide allow-set, and SEAM-1 (attacker
+# reaches only DNS + model API + control-plane + target) is unchanged. The build
+# Pod is short-lived, runs under gVisor, pushes only to the in-namespace registry,
+# and dies with the namespace at teardown.
+#
+# DNS + `toFQDNs` IP learning: the namespace-wide policy's L7 `dns` rule (empty
+# endpointSelector) already governs the build Pod, so Cilium's DNS proxy observes
+# the build's lookups and learns these FQDNs' IPs — this policy only needs the
+# `toFQDNs` egress edges, not its own DNS rule.
+BUILD_EGRESS_POLICY_NAME = "build-egress"
+# Curated public package mirrors a Dockerfile build commonly reaches, by hostname
+# (why this is a CiliumNetworkPolicy, not a CIDR NetworkPolicy — the mirrors are
+# CDN-backed and rotate IPs). Overridable per deploy via the builder's `fqdns`.
+BUILD_EGRESS_FQDNS = (
+    "pypi.org",                 # pip: index
+    "files.pythonhosted.org",   # pip: package downloads
+    "deb.debian.org",           # apt: Debian main + security (python:*-slim base)
+    "security.debian.org",      # apt: Debian security (older sources layout)
+    "archive.ubuntu.com",       # apt: Ubuntu
+    "security.ubuntu.com",      # apt: Ubuntu security
+    "ports.ubuntu.com",         # apt: Ubuntu non-amd64 ports
+    "dl-cdn.alpinelinux.org",   # apk: Alpine
+    "registry.npmjs.org",       # npm
+)
+# apt defaults to http (80); pip/npm/apk use https (443). Allow both.
+BUILD_EGRESS_PORTS = (80, 443)
+
 # The model API allowed by FQDN. A tuple so a mirror/proxy host can be added
 # without widening to a CIDR.
 MODEL_API_FQDNS = ("openrouter.ai",)
@@ -513,5 +548,51 @@ def network_policy_manifest(
             # in `engagement-<id>`, so it needs no engagement label to scope it.
             "endpointSelector": {},
             "egress": egress,
+        },
+    }
+
+
+def build_egress_policy_manifest(
+    engagement_id: str,
+    *,
+    fqdns: tuple[str, ...] = BUILD_EGRESS_FQDNS,
+    ports: tuple[int, ...] = BUILD_EGRESS_PORTS,
+) -> dict[str, Any]:
+    """The build-scoped egress CiliumNetworkPolicy — package mirrors for Kaniko RUN.
+
+    Selects `role=build` ONLY (not the whole namespace), so it is additive on top of
+    the namespace-wide `attacker-egress` policy for the build Pod alone: the attacker
+    and target keep their unchanged allow-set (SEAM-1 intact). The single egress edge
+    allows `toFQDNs` on `fqdns` over `ports` (80 for apt, 443 for pip/npm/apk), by
+    hostname — the namespace policy's L7 DNS rule lets Cilium learn these IPs.
+
+    Applied just before the build Pod starts (provision), so there is no window where
+    the build runs with egress it should not have; if it can't be applied the build
+    simply fails under default-deny, a recorded provision failure (fail-closed).
+    """
+    return {
+        "apiVersion": CILIUM_API_VERSION,
+        "kind": CILIUM_NETWORK_POLICY_KIND,
+        "metadata": {
+            "name": BUILD_EGRESS_POLICY_NAME,
+            "namespace": namespace_name(engagement_id),
+            "labels": engagement_labels(engagement_id, role="build"),
+        },
+        "spec": {
+            "endpointSelector": {
+                "matchLabels": engagement_labels(engagement_id, role="build")
+            },
+            "egress": [
+                {
+                    "toFQDNs": [{"matchName": fqdn} for fqdn in fqdns],
+                    "toPorts": [
+                        {
+                            "ports": [
+                                {"port": str(port), "protocol": "TCP"} for port in ports
+                            ]
+                        }
+                    ],
+                }
+            ],
         },
     }

@@ -41,12 +41,19 @@ def _ctx() -> EngagementContext:
 class FakeCluster:
     """Records the provision's cluster calls; scripts per-Pod phase sequences."""
 
-    def __init__(self, phases: dict[str, list[str]], *, build_exit: int = 0) -> None:
+    def __init__(
+        self,
+        phases: dict[str, list[str]],
+        *,
+        build_exit: int = 0,
+        build_logs: str | None = None,
+    ) -> None:
         self.engagement_id = ID
         self.namespace = m.namespace_name(ID)
         self._phases = phases
         self._i: dict[str, int] = {}
         self._build_exit = build_exit
+        self._build_logs = build_logs
         self.calls: list = []
         self.context_files: dict[str, str] | None = None
 
@@ -56,6 +63,9 @@ class FakeCluster:
     def create_registry_service(self) -> str:
         self.calls.append("registry_service")
         return m.registry_endpoint(ID)
+
+    def apply_build_egress_policy(self) -> None:
+        self.calls.append("build_egress")
 
     def create_build_context_configmap(self, files, *, name=m.BUILD_CONTEXT_CONFIGMAP):
         self.calls.append(("build_context", dict(files)))
@@ -83,6 +93,11 @@ class FakeCluster:
 
     def container_exit_code(self, name: str):
         return self._build_exit
+
+    def pod_logs(self, name: str) -> str:
+        if self._build_logs is None:
+            raise RuntimeError(f"no logs for {name} (Pod gone)")
+        return self._build_logs
 
 
 def _fake_clone(dockerfile: str = _DOCKERFILE, *, extra: dict[str, str] | None = None):
@@ -140,6 +155,7 @@ def test_happy_path_clones_mirrors_and_builds_via_dir_context():
         "registry_pod",
         "registry_service",
         "build_context",
+        "build_egress",
         "build_pod",
     ]
 
@@ -158,7 +174,10 @@ def test_happy_path_clones_mirrors_and_builds_via_dir_context():
 
     # The build Pod uses a `dir://` context from that ConfigMap + the mirror — never
     # a `git://` external context (which the live egress would deny).
-    (_, context, destination, dockerfile, context_cm, registry_mirror) = cluster.calls[3]
+    build_pod = next(
+        c for c in cluster.calls if isinstance(c, tuple) and c[0] == "build_pod"
+    )
+    (_, context, destination, dockerfile, context_cm, registry_mirror) = build_pod
     assert context == f"dir://{m.BUILD_CONTEXT_MOUNT}"
     assert not context.startswith("git://")
     assert context_cm == m.BUILD_CONTEXT_CONFIGMAP
@@ -262,6 +281,28 @@ def test_build_failure_is_provision_error():
         _run(cluster)
 
 
+def test_build_failure_appends_build_log_tail():
+    # The real Kaniko stderr is captured into the ProvisionError before teardown
+    # deletes the namespace, so conductor.json records the actual cause.
+    logs = "pulling base...\nRUN pip install -r requirements.txt\nConnection timed out"
+    cluster = FakeCluster(
+        {"registry": ["Running"], "build": ["Failed"]}, build_exit=1, build_logs=logs
+    )
+    with pytest.raises(ProvisionError, match="Connection timed out") as exc:
+        _run(cluster)
+    assert "kaniko build failed" in str(exc.value)
+    assert "RUN pip install -r requirements.txt" in str(exc.value)
+
+
+def test_build_failure_log_fetch_error_does_not_mask_failure():
+    # pod_logs raising (Pod already torn down) must not eclipse the build failure.
+    cluster = FakeCluster(
+        {"registry": ["Running"], "build": ["Failed"]}, build_exit=1, build_logs=None
+    )
+    with pytest.raises(ProvisionError, match="kaniko build failed"):
+        _run(cluster)
+
+
 def test_build_timeout_is_provision_error():
     # Never terminal: watch_pod times out. Drive a clock that trips the deadline.
     cluster = FakeCluster({"registry": ["Running"], "build": ["Running"]})
@@ -314,7 +355,10 @@ def test_dir_context_ref_passes_through_without_clone_or_mirror():
     )
     assert "ref" not in resolve_fn.seen
     assert mirror_fn.calls == []
-    (_, context, _dest, _df, context_cm, registry_mirror) = cluster.calls[2]
+    build_pod = next(
+        c for c in cluster.calls if isinstance(c, tuple) and c[0] == "build_pod"
+    )
+    (_, context, _dest, _df, context_cm, registry_mirror) = build_pod
     assert context == "dir:///workspace"
     assert context_cm is None and registry_mirror is None
 

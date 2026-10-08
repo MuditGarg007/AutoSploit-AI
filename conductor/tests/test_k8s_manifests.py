@@ -342,3 +342,45 @@ def test_network_policy_overrides_reach_control_plane_and_model():
     )
     assert cp["toEndpoints"][0]["matchLabels"]["k8s:io.kubernetes.pod.namespace"] == "cp-ns"
     assert cp["toPorts"][0]["ports"][0]["port"] == "8080"
+
+
+# --- build-scoped egress (package mirrors for Kaniko RUN) --------------------
+
+
+def test_build_egress_policy_scoped_to_build_role_only():
+    # The crux of the owner sign-off: this widens egress for the build Pod ALONE,
+    # never the whole namespace — so the attacker/target keep the SEAM-1 allow-set.
+    bp = m.build_egress_policy_manifest(ID)
+    assert bp["apiVersion"] == "cilium.io/v2"
+    assert bp["kind"] == "CiliumNetworkPolicy"
+    assert bp["metadata"]["namespace"] == f"engagement-{ID}"
+    assert bp["metadata"]["name"] == "build-egress"
+    # Scoped by endpointSelector to role=build — NOT the empty (whole-namespace)
+    # selector the attacker-egress policy uses.
+    assert bp["spec"]["endpointSelector"]["matchLabels"] == {
+        "engagement": ID,
+        "role": "build",
+    }
+    assert bp["spec"]["endpointSelector"] != {}
+
+
+def test_build_egress_policy_allows_package_mirrors_by_fqdn_on_80_and_443():
+    bp = m.build_egress_policy_manifest(ID)
+    rule = bp["spec"]["egress"][0]
+    names = [f["matchName"] for f in rule["toFQDNs"]]
+    # Common Python/apt mirrors the testbed and real targets need at build time.
+    assert "pypi.org" in names
+    assert "files.pythonhosted.org" in names
+    assert "deb.debian.org" in names
+    ports = {p["port"] for p in rule["toPorts"][0]["ports"]}
+    assert ports == {"80", "443"}  # apt http + pip/npm/apk https
+    assert all(p["protocol"] == "TCP" for p in rule["toPorts"][0]["ports"])
+
+
+def test_build_egress_policy_fqdns_and_ports_overridable():
+    bp = m.build_egress_policy_manifest(
+        ID, fqdns=("mirror.internal",), ports=(443,)
+    )
+    rule = bp["spec"]["egress"][0]
+    assert rule["toFQDNs"] == [{"matchName": "mirror.internal"}]
+    assert [p["port"] for p in rule["toPorts"][0]["ports"]] == ["443"]

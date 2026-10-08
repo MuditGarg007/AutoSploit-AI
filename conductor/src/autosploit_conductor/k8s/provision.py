@@ -56,6 +56,11 @@ _CONFIGMAP_MAX_BYTES = 1024 * 1024
 _POD_OUTPUT_DIR = "/tmp/autosploit-out"
 _SCOPE_BASENAME = "scope.yaml"
 
+# Trailing build-Pod log lines appended to a failed-build ProvisionError, mirroring
+# the Phase A booter's §8 "log tail". Teardown deletes the namespace in `finally`, so
+# this is the only chance to record the real Kaniko stderr — capture it on the raise.
+_BUILD_LOG_TAIL_LINES = 40
+
 
 class ProvisionError(RuntimeError):
     """The target never came up — recorded as failed(provision), not a crash."""
@@ -148,6 +153,13 @@ def phaseb_provision(
                         f"build-context preparation failed: {exc}"
                     ) from exc
                 context_configmap = cluster.create_build_context_configmap(prepared.files)
+            # Scoped egress for the build Pod's `RUN` steps (pip/apt/npm/apk →
+            # public package mirrors). Additive, `role=build` only, so the
+            # attacker/target egress is untouched (SEAM-1 intact). Applied before
+            # the Pod starts so there is no unpoliced window; a failure here fails
+            # the build closed under the namespace default-deny (owner sign-off,
+            # 2026-10-09).
+            cluster.apply_build_egress_policy()
             cluster.create_build_pod(
                 context=prepared.context,
                 destination=destination,
@@ -164,10 +176,16 @@ def phaseb_provision(
                 sleep=sleep,
             )
             if outcome.timed_out:
-                raise ProvisionError("kaniko build timed out")
+                raise ProvisionError(
+                    _with_build_log("kaniko build timed out", cluster)
+                )
             if outcome.phase != "Succeeded":
                 raise ProvisionError(
-                    f"kaniko build failed (phase={outcome.phase}, exit={outcome.exit_code})"
+                    _with_build_log(
+                        f"kaniko build failed (phase={outcome.phase}, "
+                        f"exit={outcome.exit_code})",
+                        cluster,
+                    )
                 )
             # Populate the cache from the freshly built image. Fail-open: the target
             # is already built and pushed, so a cache-populate failure is swallowed.
@@ -360,6 +378,24 @@ def _pack_context(repo_root: Path) -> Mapping[str, str]:
             )
         files[rel.as_posix()] = text
     return files
+
+
+def _with_build_log(message: str, cluster: EngagementCluster) -> str:
+    """Append the build Pod's log tail to a failed-build `message` (§8 pattern).
+
+    Teardown deletes the namespace in `run_k8s`'s `finally`, so the build Pod and its
+    logs vanish seconds after this raise — this is the only point the real Kaniko
+    stderr can be recorded into `conductor.json`. Fail-soft: if the logs can't be read
+    (Pod already gone, API error), return `message` unchanged rather than masking the
+    original failure with a log-fetch error.
+    """
+    try:
+        logs = cluster.pod_logs(m.BUILD_POD_NAME)
+    except Exception:  # noqa: BLE001 — never let a log read eclipse the build failure
+        return message
+    lines = [line for line in (logs or "").splitlines() if line.strip()]
+    tail = lines[-_BUILD_LOG_TAIL_LINES:]
+    return f"{message}\n" + "\n".join(tail) if tail else message
 
 
 def _emit_config(ctx: EngagementContext, *, host: str, port: int) -> Mapping[str, str]:
