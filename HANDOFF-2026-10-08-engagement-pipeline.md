@@ -15,8 +15,8 @@ dashboard showed `undefined` / "Disconnected".
 The engagement pipeline has three independent faults, discovered in order:
 
 1. **Redis was missing from the cluster** — queue broker gone, nothing provisioned. **FIXED 2026-10-08.**
-2. **The conductor is not packaged in the control-plane image** — `conductor run` cannot execute, so no engagement ever actually runs. **CODE DONE 2026-10-08 (third pass), deploy remaining.** The fat control-plane image now bundles the conductor + Python + git/crane/helm + the engagement chart, the worker invokes `conductor run --k8s --target-port`, a `target_port` field flows through the create API → DB → job, and the plane ServiceAccount gets the engagement-ops RBAC. Built + smoke-tested locally as `control-plane:eng2`. What's left is purely the prod rollout (push/load image, update the CI leak scanner, add the OPENROUTER secret key, Helm rev bump, re-run an engagement) — see §2 below.
-3. **Frontend routes to `/dashboard/undefined`** and opens the SSE stream with an `undefined` engagement id. **OPEN — cosmetic relative to #2, but it's the visible "Disconnected".**
+2. **The conductor is not packaged in the control-plane image** — `conductor run` cannot execute, so no engagement ever actually runs. **DEPLOYED 2026-10-08 (fourth pass) — Helm rev 11 live; only a live-engagement confirmation remains.** The fat control-plane image bundles the conductor + Python + git/crane/helm + the engagement chart, the worker invokes `conductor run --k8s --target-port`, a `target_port` field flows through the create API → DB → job, and the plane ServiceAccount gets the engagement-ops RBAC. All four commits are on `origin/main` (`4428dbd`); the CI leak scanner was updated for architecture A; the fat GHCR image `:4428dbd` is loaded into the kind node; `OPENROUTER_API_KEY` is in `control-plane-secrets`; the control-plane runs rev 11 with the conductor runnable and `CONDUCTOR_K8S=true`. The first live engagement was triggered (fifth pass): the conductor **did** run end-to-end (record `conductor.json` landed, no `no record; exit=null`), proving the packaging — but provision failed at the git clone because the worker handed the conductor a host-less `owner/repo` ref. **Fixed 2026-10-08 (fifth pass, committed `996069b`) — control-plane fat-image rebuild + redeploy pending.** See fault #6 and the fifth-pass section below.
+3. **Frontend routes to `/dashboard/undefined`** and opens the SSE stream with an `undefined` engagement id. **FIXED 2026-10-08 (fifth pass, committed `a2bdf95`) — client redeploy pending.** The client read `row.id` from `POST /engagements`, but that route returns the lifecycle `DispatchResult { engagement, ingestToken }`, not a flat row; the id lives at `row.engagement.id`. See the fifth-pass section below.
 
 Two further issues were surfaced while fixing #2 (see "Issues surfaced 2026-10-08" below):
 
@@ -168,23 +168,63 @@ python 3.12, `conductor` on PATH and runnable, git + crane + helm 3.16.2, the ch
 and the whole `--k8s` import chain (kubernetes 36.0.3 + conductor k8s modules +
 provisioner build) all load as the non-root `autosploit` user.
 
-### Deploy steps remaining to fully close #2 (prod — NOT started)
-1. **Update the CI leak scanner.** It asserts `OPENROUTER_API_KEY` never appears in
-   plane config; architecture A puts it there, so the scanner **will now fail** this
-   chart. This is called out in `deploy/helm/control-plane/values.yaml` and `CLAUDE.md`.
-2. Add the `OPENROUTER_API_KEY` key to the `control-plane-secrets` Secret.
-3. Push/load the fat image and Helm rev bump with `conductor.k8s=true`.
-4. Re-run an engagement and confirm a `conductor.json` record under
-   `CONDUCTOR_OUT_DIR/<id>/` and an `engagement-*` namespace.
+### Deploy steps — DONE 2026-10-08 (fourth pass), except the final live run
 
-Nothing committed yet — left for review.
+All four commits landed on `origin/main` and the prod box was rolled forward to
+Helm rev 11. Sequence as executed:
 
-### Open question for whoever picks this up
-How did `h3gate` run 47h ago if the conductor was never in the image? Possibly
-that engagement was driven by a different path (e.g. the red-team §7 script
-flow), not the dashboard → `POST /engagements` → worker path. Worth confirming
-whether the dashboard engagement path has *ever* produced a live conductor run,
-or whether this is its first exercise.
+0. **Committed + pushed.** Four commits: `fix(control-plane): treat Transit
+   key-create 403 as benign at boot` (pre-existing), `fix(provisioner): restore
+   build/ package and stop gitignoring it`, `feat(control-plane): run the conductor
+   in-process via a fat image (arch A)`, `test(control-plane): update secret-split
+   leak scanner for architecture A`. Pushed `1a71877..4428dbd` to `origin/main`
+   (triggered CI + Release).
+1. **CI leak scanner updated — DONE.** `control-plane/test/leak-scanner.spec.ts`
+   was reframed for architecture A: it no longer asserts "key never enters the
+   plane" (that invariant was deliberately relaxed), and it had a real gap — it only
+   walked `control-plane/`, so it never actually covered the chart it claimed to
+   guard. New assertions: no key VALUE (`sk-or-v1-…`) in plane source, config, OR
+   the chart; the plane application code never reads the key
+   (`process.env.OPENROUTER_API_KEY`); the chart references it ONLY via
+   `secretKeyRef`. Scanner now walks both `control-plane/` and
+   `deploy/helm/control-plane/`. 4 tests pass. (The release-workflow image scan
+   greps the key VALUE shape and passed on the fat image.)
+2. **`OPENROUTER_API_KEY` added to `control-plane-secrets` — DONE** (merge-patched
+   `stringData`, the other 7 keys preserved; present, not decoded).
+3. **Fat image built + loaded + Helm rev bump — DONE.** Release CI built and pushed
+   the multi-arch `ghcr.io/muditgarg007/control-plane:4428dbd6…` (amd64 build +
+   leak scan + multi-arch push all green). On the VPS the image was loaded into the
+   kind node (see the kind gotcha below) as `:4428dbd`, and `helm upgrade` ran to
+   rev 11 with the rev-10 user values re-supplied explicitly (NOT `--reuse-values`
+   — that flag ignores the new chart's `conductor.*` / `rbac.engagementOps`
+   defaults and would break template rendering) plus `image.tag=4428dbd`. The
+   pre-upgrade migrate-job applied migration 0004. Verified in the running pod:
+   image `:4428dbd`, `conductor` runnable (`/app/conductor/.venv/bin/conductor`,
+   first on the container PATH node inherits), `CONDUCTOR_K8S=true`, all conductor
+   env + `OPENROUTER_API_KEY` present, engagement-ops ClusterRole + binding
+   rendered, chart at `/app/engagement-chart`.
+4. **Re-run an engagement — PENDING (the only remaining item).** Trigger one
+   engagement (dashboard against `MuditGarg007/Autosploit-test`, target port 5000)
+   and confirm the worker logs `spawning conductor` without the follow-up
+   `no record; exit=null`, a new `engagement-*` namespace appears, and
+   `conductor.json` lands under `CONDUCTOR_OUT_DIR/<id>/` (`/tmp/autosploit-runs`).
+
+#### kind multi-arch load gotcha (worth remembering)
+`kind load docker-image` and `kind load image-archive` both import with
+`--all-platforms`. A `docker pull` of the multi-arch tag fetches only the host
+(amd64) variant, so the image/tar still carries the manifest-list **index**
+referencing the absent arm64 manifest, and the load fails with
+`ctr: content digest sha256:…: not found`. Fix (matches the operator's earlier
+`@sha256:` digest-pinned images): resolve the amd64 platform digest with
+`docker manifest inspect`, `docker pull` that digest (a single-platform image, no
+index), retag to the short tag, `docker save`, then `kind load image-archive`.
+
+### Open question — ANSWERED 2026-10-08 (owner)
+How did `h3gate` run 47h ago if the conductor was never in the image? `h3gate`
+was the red-team §7 flow, closed successfully — a different path, not the
+dashboard → `POST /engagements` → worker path. The engagement now being verified
+is the **first** exercise of the dashboard engagement path, so treat step-4
+surprises as first-run issues, not regressions.
 
 ---
 
@@ -227,6 +267,12 @@ disk — never committed (not in git history). Importing the provisioner
 'autosploit_provisioner.build'`, which (a) broke collection of three conductor
 test files and (b) is the "second landmine" that would have killed any real
 conductor run at teardown.
+
+Root cause for the never-committed part (found fourth pass): `provisioner/.gitignore`
+had an unanchored `build/` rule (meant for the setuptools artifact dir) that also
+matched the `src/autosploit_provisioner/build/` source package, so it could never
+be `git add`ed. Fixed by anchoring the rule to `/build/`; the source package is
+now tracked.
 
 #### Fix applied (code in `~/AutoSploit-AI`, no prod poke)
 Rebuilt the package from its pinned test contracts:
@@ -284,6 +330,48 @@ This is a **latent** provisioner bug, not a regression: both discovery tests are
 integration and only became runnable once the `build/` package (#4) was restored.
 The booter is not implicated — a no-`EXPOSE` container has no ports regardless,
 and it exits on its own.
+
+### 6. Worker hands the conductor a host-less repo ref — FIXED (fifth pass)
+
+#### Symptom
+The first live dashboard engagement (`ab35d906-874a-4bd2-920d-60104d375ed9`) ran
+the conductor to completion — `/tmp/autosploit-runs/<id>/conductor.json` was
+written, no `no record; exit=null` — but the record showed provision failed:
+```
+"provision": {
+  "error": "build-context preparation failed: git clone failed: ... unable to
+   access 'https://MuditGarg007/Autosploit-test/': Could not resolve host:
+   MuditGarg007",
+  "ok": false
+}
+```
+
+#### Root cause
+The worker invokes `conductor run <repoRef>` with the GitHub fullName
+`owner/repo`. The conductor's clone convention (k8s `provision.py::_clone_ref`)
+is a bare `host/org/repo`, which it turns into an `https://` remote. A
+two-segment `owner/repo` therefore became `https://owner/repo` with `owner`
+parsed as the DNS host — `MuditGarg007` — and the clone failed to resolve.
+`h3gate` never hit this: it was the red-team flow, not the dashboard →
+`POST /engagements` → worker → conductor path, which this engagement exercised
+for the first time.
+
+#### Fix applied (committed `996069b`, code only)
+`engagement.worker.ts` now runs the ref through `conductorRepoRef()` for the
+conductor argv only: a bare `owner/repo` is qualified to `github.com/owner/repo`
+(the control plane is GitHub-only — GitHub OAuth, GitHub tokens), while a ref
+that already carries a scheme, an scp-like remote, or a host segment passes
+through. The job's `repoRef` (DB row, logs, `conductor.json` `repo_ref`) stays
+the clean fullName. `GITHUB_TOKEN` is already in the conductor env, so the
+provisioner cloner authenticates private repos once the host resolves. Covered
+by `control-plane/test/conductor-repo-ref.spec.ts` (5 cases). Verified that
+`github.com/MuditGarg007/Autosploit-test` resolves and clones (the repo is
+public).
+
+#### Remaining
+Rebuild + reload the fat control-plane image and roll the Helm release so the
+worker fix is live, then re-run. The next unknown is the Kaniko in-cluster build
+and the attack phase — still unexercised by the dashboard path.
 
 ---
 
@@ -358,3 +446,59 @@ self-recover; abort/ignore them and start fresh once #2 is fixed.
 - Frontend id bug (#3): **still unaddressed**.
 - `CLAUDE.md` "Resolved": #2 code work added; auto-memory `conductor-in-plane-image.md`
   written.
+
+### 2026-10-08 (fourth pass — #2 committed + deployed, Helm rev 11)
+- Conductor packaging + k8s wiring (#2): **DEPLOYED.** Committed the third-pass
+  code as 4 commits and pushed `1a71877..4428dbd` to `origin/main`. Updated the CI
+  leak scanner (`leak-scanner.spec.ts`) for architecture A and closed its chart
+  coverage gap (4 tests pass). Release CI built + pushed the multi-arch fat image
+  `:4428dbd6…`; loaded it into the kind node as `:4428dbd` via the amd64-digest →
+  save → `image-archive` route (see the kind multi-arch gotcha in §2); added
+  `OPENROUTER_API_KEY` to `control-plane-secrets`; `helm upgrade` to **rev 11** with
+  the rev-10 user values re-supplied explicitly + `image.tag=4428dbd` (migrate-job
+  applied 0004). Verified in-pod: `:4428dbd` image, conductor runnable,
+  `CONDUCTOR_K8S=true`, OPENROUTER key + conductor env present, engagement-ops RBAC
+  rendered.
+- Provisioner `build/` gitignore (#4 follow-up): fixed the unanchored `build/`
+  rule that had kept the source package out of git (`/build/` now); package tracked.
+- **The ONLY remaining item for #2:** trigger one engagement and confirm the
+  `engagement-*` namespace + `conductor.json` (step 4 in §2). The dashboard path is
+  being exercised for the FIRST time (h3gate was the red-team flow — see the
+  answered open question), so treat first-run breakage as new, not regression.
+- Discovery `BootTimeout` race (#5): **still open**.
+- Frontend id bug (#3): **still unaddressed** — this is the visible "Disconnected"
+  the user sees even on a successful backend run.
+- Standing Redis risk (#1): **still not in any manifest** — a node/pod wipe drops it.
+
+### 2026-10-08 (fifth pass — first live engagement run; #3 and new #6 fixed)
+- Triggered the first engagement over the real dashboard →
+  `POST /engagements` → worker → conductor path
+  (`ab35d906-874a-4bd2-920d-60104d375ed9`, `MuditGarg007/Autosploit-test`).
+- **#2 packaging proven:** the conductor ran end-to-end inside the plane pod
+  (`conductor.json` written under `/tmp/autosploit-runs/<id>/`, worker logged
+  `spawning conductor` with no `no record; exit=null` follow-up). The fat image
+  + arch-A wiring works.
+- **#6 (new fault) — FIXED, committed `996069b`:** provision failed at the git
+  clone because the worker passed a host-less `owner/repo`; the conductor's
+  `_clone_ref` made it `https://owner/repo`. `conductorRepoRef()` now qualifies a
+  bare GitHub `owner/repo` to `github.com/owner/repo` at the conductor argv.
+  `nest build` green; new spec `conductor-repo-ref.spec.ts` 5 passed; the
+  qualified URL verified to resolve + clone (public repo). **control-plane
+  fat-image rebuild + Helm roll pending** before it is live.
+- **#3 — FIXED, committed `a2bdf95`:** the client read `row.id` from
+  `POST /engagements`, but that returns `DispatchResult { engagement, ingestToken
+  }`; the id is at `row.engagement.id`. `createEngagement` now reads it, so the
+  new run routes to the real id instead of `/dashboard/undefined`. **client
+  redeploy pending.**
+- Both fixes are code-only, pushed to `origin/main` (`4428dbd..996069b`); nothing
+  on prod yet. NOTE: the working tree also carries an unrelated, in-progress
+  client UI refactor (`SignInCard`/`SignInModal`/`NewEngagementPanel`, a deleted
+  `NewEngagementForm`/`new` page, Navbar/Sidebar/CTA, icon/favicon) that was
+  **deliberately left uncommitted** — not part of these two fixes.
+- **Next:** (1) redeploy the client (fixes the visible "Disconnected"); (2)
+  rebuild + reload the fat control-plane image via the amd64-digest →
+  `image-archive` route (§2 kind gotcha) and Helm-roll it (fixes the clone); (3)
+  re-run one engagement — the clone will succeed, and the first-exercise unknowns
+  move to the Kaniko in-cluster build + the attack phase.
+- Discovery `BootTimeout` race (#5): **still open.**
+- Standing Redis risk (#1): **still not in any manifest.**
