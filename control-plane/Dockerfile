@@ -49,6 +49,11 @@ COPY --from=build --chown=autosploit:autosploit /app/packages ./packages
 # @autosploit/contracts workspace link) fails with ERR_MODULE_NOT_FOUND at boot.
 COPY --from=build --chown=autosploit:autosploit /app/control-plane/node_modules ./control-plane/node_modules
 COPY --from=build --chown=autosploit:autosploit /app/control-plane/dist ./control-plane/dist
+# Ship the SQL migrations next to the compiled migrate runner (dist/db/migrations)
+# so the Helm pre-upgrade hook can apply the schema with `node dist/db/migrate.js`
+# (deploy/helm/control-plane/templates/migrate-job.yaml). tsc does not emit .sql/
+# .json, so copy them explicitly from the build stage's source tree.
+COPY --from=build --chown=autosploit:autosploit /app/control-plane/src/db/migrations ./control-plane/dist/db/migrations
 COPY --from=build --chown=autosploit:autosploit /app/control-plane/package.json ./control-plane/package.json
 # Some bun-installed files land mode 0600/root-only; ensure the non-root runtime
 # user can read every module and traverse every dir (EACCES otherwise at import).

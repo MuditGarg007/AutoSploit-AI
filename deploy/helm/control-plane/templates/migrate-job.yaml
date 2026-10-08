@@ -1,0 +1,52 @@
+{{- if .Values.migrations.enabled }}
+# Schema-migration hook. Runs `node dist/db/migrate.js` (drizzle programmatic
+# migrator) against external.postgresUrl as a Helm pre-install/pre-upgrade hook, so
+# a fresh database always has its tables BEFORE the app Deployment rolls out and
+# serves a request. Without this a new DB (e.g. a recreated kind cluster) comes up
+# empty and the GitHub OAuth callback 500s on `relation "users" does not exist`.
+#
+# Idempotent: drizzle records applied migrations in its __drizzle_migrations table
+# and skips any already present, so the hook no-ops once the schema is current.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "control-plane.fullname" . }}-migrate
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    # Before the app Deployment, on both install and upgrade.
+    "helm.sh/hook": pre-install,pre-upgrade
+    # Negative weight → runs ahead of other hook resources.
+    "helm.sh/hook-weight": "-5"
+    # Replace a prior Job before recreating (Job specs are immutable) and delete a
+    # SUCCEEDED run; a FAILED Job is kept so its logs survive for debugging.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrations.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "control-plane.serviceAccountName" . }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Replaces the image CMD; WORKDIR (/app/control-plane) is inherited, so
+          # dist/db/migrate.js and its sibling dist/db/migrations resolve.
+          command: ["node", "dist/db/migrate.js"]
+          env:
+            - name: DATABASE_URL
+              value: {{ required ".Values.external.postgresUrl is required" .Values.external.postgresUrl | quote }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+{{- end }}

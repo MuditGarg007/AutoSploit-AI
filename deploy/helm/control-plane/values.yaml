@@ -31,6 +31,22 @@ app:
     requests: { cpu: "50m", memory: "128Mi" }
     limits: { cpu: "500m", memory: "512Mi" }
 
+# Schema migrations. A Helm pre-install,pre-upgrade hook Job runs the drizzle
+# migrator (`node dist/db/migrate.js`) against external.postgresUrl BEFORE the app
+# rolls out, so a fresh database always has its tables before a pod serves a
+# request (templates/migrate-job.yaml). Idempotent — drizzle's __drizzle_migrations
+# table skips applied migrations, so it no-ops once the schema is current. Disable
+# only when migrations are applied out-of-band.
+migrations:
+  enabled: true
+  # Job retries before it is marked failed (the deploy then aborts — fail-closed).
+  backoffLimit: 1
+  # Hard ceiling so a stuck migration cannot block a deploy indefinitely.
+  activeDeadlineSeconds: 120
+  resources:
+    requests: { cpu: "50m", memory: "128Mi" }
+    limits: { cpu: "250m", memory: "256Mi" }
+
 service:
   type: ClusterIP
   port: 80

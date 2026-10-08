@@ -7,6 +7,44 @@
 **Predecessors:** `docs/vps-backend-deploy-handoff.md`, `docs/vps-backend-public-exposure.md`,
 `docs/vps-ghcr-image-fix-handoff.md`
 
+## UPDATE 2026-10-08 (second 500 — missing DB schema, resolved)
+
+After Path A (below) fixed the Vault leg, "Continue with GitHub" still returned
+`{"statusCode":500,"message":"Internal server error"}`. Different root cause:
+
+- Pod logs showed `error ExceptionsHandler  relation "users" does not exist`
+  thrown from `IdentityService.completeGitHubLogin` → `IdentityController.callback`.
+  Vault encryption now succeeds (the `k8s Vault auth failed, falling back to
+  VAULT_TOKEN` line is a **warn**, not the error); execution reaches the DB
+  transaction and fails there.
+- Cause: the drizzle migrations (`control-plane/src/db/migrations/0000`–`0003`)
+  had never been applied to the VPS Postgres. The deploy had no migration step, so
+  a fresh DB came up empty. (OAuth failures throw 401; this threw 500 = a raw DB
+  error, which is the tell it is not a credential problem.)
+- Immediate fix: applied the four migrations to the VPS Postgres via a
+  port-forward + `DATABASE_URL=... bun run db:migrate`. Tables created; login works.
+- Permanent fix (committed): a Helm `pre-install,pre-upgrade` hook Job now runs the
+  schema migration before the app rolls out, so a recreated DB can never reopen
+  this. See `deploy/helm/control-plane/templates/migrate-job.yaml`,
+  `control-plane/src/db/migrate.ts` (drizzle programmatic migrator, not drizzle-kit,
+  which is absent from the runtime image), the Dockerfile copy of the SQL folder
+  into `dist/db/migrations`, and the `migrations:` block in `values.yaml`. The hook
+  is idempotent (drizzle's `__drizzle_migrations` table skips applied ones).
+
+### Path B code is now wired (follow-up from the gotcha below)
+
+The "dead code" gotcha noted under Path A is fixed: commit `bf60a5e` makes
+`encrypt`/`decrypt` call `applyToken()` → `authToken()` before each Transit call,
+so pure k8s auth (no `VAULT_TOKEN`) now works at the code level. Only the Vault
+**server-side** wiring remains. Committed, idempotent artifacts to do it:
+`scripts/vault-k8s-auth.sh` (enables the k8s auth method, writes the policy, binds
+role `control-plane` to the app SA, grants the vault SA `system:auth-delegator`),
+`deploy/vault/transit-github-tokens.hcl` (least-privilege encrypt/decrypt policy),
+and `deploy/vault/vault-auth-delegator-rbac.yaml`. Run the script on the VPS. Note
+the dev Vault is `server -dev` (in-memory): its auth config and Transit key are
+lost on a vault pod restart, so re-run the script after any restart. `VAULT_TOKEN`
+stays in the secret as a fallback.
+
 ## RESOLVED 2026-10-08 (Path A)
 
 Dev-mode Vault stood up in-cluster; login encryption path is live. What was done:

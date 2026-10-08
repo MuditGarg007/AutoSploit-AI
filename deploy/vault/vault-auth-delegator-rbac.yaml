@@ -1,0 +1,28 @@
+# Lets Vault's Kubernetes auth method validate pod ServiceAccount tokens.
+#
+# When a pod logs in with its SA JWT, Vault calls the cluster's TokenReview API to
+# verify it. Vault does that using its OWN pod ServiceAccount (local token-review,
+# the default when auth/kubernetes/config sets no token_reviewer_jwt), so that SA
+# needs the cluster role system:auth-delegator (create TokenReviews). Without this
+# binding, every kubernetesLogin fails and VaultService falls back to VAULT_TOKEN
+# (the "k8s Vault auth failed" warn).
+#
+# Edit the subject below to the dev Vault pod's actual ServiceAccount + namespace
+# before applying (scripts/vault-k8s-auth.sh discovers and prints them):
+#   kubectl -n autosploit-system get pod -l app=vault \
+#     -o jsonpath='{.items[0].spec.serviceAccountName}'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-auth-delegator
+  labels:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: auth
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: default # <-- dev Vault SA; change if the vault pod uses another SA
+    namespace: autosploit-system
