@@ -142,7 +142,7 @@ export class EngagementWorker {
       [
         ...cmdArgs,
         'run',
-        repoRef,
+        conductorRepoRef(repoRef),
         '--engagement-id',
         engagementId,
         '--out',
@@ -327,6 +327,27 @@ export class EngagementWorker {
 // like `node "C:\Program Files\app\conductor.mjs"` survives spaces in paths.
 // CONDUCTOR_CMD is operator-controlled config, never untrusted input, so this
 // is not a command-injection surface (the tokens go to spawn, not a shell).
+// Host-qualify a repo ref for the conductor. The conductor's clone convention is
+// a bare `host/org/repo` (conductor k8s/provision.py::_clone_ref prepends
+// `https://`); a bare GitHub `org/repo` fullName would become
+// `https://org/repo` — `org` parsed as the host — and fail DNS. The control
+// plane is GitHub-only (GitHub OAuth, GitHub tokens), so a classic two-segment
+// `owner/repo` is qualified to `github.com/owner/repo`. A ref that already
+// carries a scheme, an scp-like remote, or a host segment is passed through.
+export function conductorRepoRef(repoRef: string): string {
+  if (repoRef.includes('://')) return repoRef;
+  // scp-like git remote, e.g. git@github.com:owner/repo
+  const at = repoRef.indexOf('@');
+  if (at !== -1 && repoRef.slice(at + 1).includes(':')) return repoRef;
+  const segments = repoRef.split('/');
+  // Exactly `owner/repo` (two non-empty segments, no host). A host already
+  // present (3+ segments, or a first segment that looks like a host) is left as-is.
+  if (segments.length === 2 && segments[0] && segments[1] && !segments[0].includes('.')) {
+    return `github.com/${repoRef}`;
+  }
+  return repoRef;
+}
+
 export function splitCommand(cmd: string): string[] {
   const tokens: string[] = [];
   const re = /"([^"]*)"|(\S+)/g;
