@@ -7,6 +7,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
+import { useSignIn } from "@/components/SignInModal";
 
 const LINKS = [
   { label: "Platform", href: "#platform" },
@@ -17,6 +18,7 @@ const LINKS = [
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const { status, signOut } = useAuth();
+  const openSignIn = useSignIn();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -78,12 +80,13 @@ export default function Navbar() {
             </button>
           </>
         ) : (
-          <Link
-            href="/login"
+          <button
+            type="button"
+            onClick={openSignIn}
             className="ml-1 flex h-9 items-center rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-bright active:scale-[0.98]"
           >
             Sign in
-          </Link>
+          </button>
         )}
       </nav>
     </header>

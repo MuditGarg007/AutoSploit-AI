@@ -21,6 +21,7 @@ import {
   PlusIcon,
   UserIcon,
 } from "./icons";
+import { useNewEngagement } from "./NewEngagementPanel";
 
 // All-engagements index link. The run list below leads into individual runs; this
 // is the one top-level nav entry that survives from the old grouped nav.
@@ -198,6 +199,7 @@ export default function Sidebar({
 }) {
   const pathname = usePathname() ?? "/dashboard";
   const [rows, setRows] = useState<EngagementRow[]>([]);
+  const openNewEngagement = useNewEngagement();
 
   // Pull the run list client-side (listEngagements is isomorphic and falls back
   // to mock). Re-run on path change so a newly dispatched run shows up once its
@@ -242,14 +244,17 @@ export default function Sidebar({
 
       {/* primary action */}
       <div className="border-r border-white/10 px-3 pt-4">
-        <Link
-          href="/dashboard/new"
-          onClick={onNavigate}
-          className="flex h-9 items-center justify-center gap-2 rounded-md bg-accent text-sm font-semibold text-white transition-colors hover:bg-accent-bright active:scale-[0.99]"
+        <button
+          type="button"
+          onClick={() => {
+            onNavigate?.();
+            openNewEngagement();
+          }}
+          className="flex h-9 w-full items-center justify-center gap-2 rounded-md bg-accent text-sm font-semibold text-white transition-colors hover:bg-accent-bright active:scale-[0.99]"
         >
           <PlusIcon size={15} />
           New engagement
-        </Link>
+        </button>
       </div>
 
       {/* nav: index link + run history */}

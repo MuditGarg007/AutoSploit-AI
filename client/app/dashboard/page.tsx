@@ -6,8 +6,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import DashboardShell from "@/components/dashboard/DashboardShell";
+import { NewEngagementTrigger } from "@/components/dashboard/NewEngagementPanel";
 import PageHeader from "@/components/dashboard/PageHeader";
 import StatTiles, { type Stat } from "@/components/dashboard/StatTiles";
 import Panel from "@/components/dashboard/Panel";
@@ -80,13 +80,10 @@ export default function DashboardPage() {
         title="Engagements"
         subtitle="Isolated red-team runs. Select one to watch it live."
         actions={
-          <Link
-            href="/dashboard/new"
-            className="flex h-9 items-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-bright active:scale-[0.99]"
-          >
+          <NewEngagementTrigger className="flex h-9 items-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-bright active:scale-[0.99]">
             <PlusIcon size={15} />
             New engagement
-          </Link>
+          </NewEngagementTrigger>
         }
       />
 

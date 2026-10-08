@@ -1,8 +1,6 @@
 // AutoSploit AI landing page. MicroSlats (reactbits) hero tinted to the single
 // burgundy accent on true black, then the platform, flow, containment, and CTA.
 
-import Link from "next/link";
-
 import MicroSlats from "@/components/MicroSlats";
 import Navbar from "@/components/Navbar";
 import Features from "@/components/Features";
@@ -10,6 +8,7 @@ import HowItWorks from "@/components/HowItWorks";
 import Isolation from "@/components/Isolation";
 import CTA from "@/components/CTA";
 import Footer from "@/components/Footer";
+import { SignInProvider, SignInTrigger } from "@/components/SignInModal";
 
 function Hero() {
   return (
@@ -50,12 +49,9 @@ function Hero() {
           Autonomous engagements that run isolated, then leave no trace.
         </p>
 
-        <Link
-          href="/login?mode=signup"
-          className="mt-10 flex h-11 items-center rounded-md bg-accent px-6 text-sm font-semibold text-white transition-colors hover:bg-accent-bright active:scale-[0.98]"
-        >
+        <SignInTrigger className="mt-10 flex h-11 items-center rounded-md bg-accent px-6 text-sm font-semibold text-white transition-colors hover:bg-accent-bright active:scale-[0.98]">
           Get started
-        </Link>
+        </SignInTrigger>
       </div>
     </section>
   );
@@ -63,7 +59,7 @@ function Hero() {
 
 export default function Home() {
   return (
-    <>
+    <SignInProvider>
       <Navbar />
       <main className="flex-1">
         <Hero />
@@ -73,6 +69,6 @@ export default function Home() {
         <CTA />
       </main>
       <Footer />
-    </>
+    </SignInProvider>
   );
 }

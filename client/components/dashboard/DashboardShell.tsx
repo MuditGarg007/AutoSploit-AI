@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
+import { NewEngagementProvider } from "./NewEngagementPanel";
 
 export default function DashboardShell({
   children,
@@ -46,6 +47,7 @@ export default function DashboardShell({
   }, [navOpen]);
 
   return (
+    <NewEngagementProvider>
     <div className="min-h-screen bg-canvas">
       {/* Backdrop: mobile only, only while the drawer is open. */}
       {navOpen && (
@@ -68,5 +70,6 @@ export default function DashboardShell({
         </main>
       </div>
     </div>
+    </NewEngagementProvider>
   );
 }
