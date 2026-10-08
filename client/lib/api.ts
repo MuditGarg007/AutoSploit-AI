@@ -193,8 +193,12 @@ export async function createEngagement(input: {
   if (!res.ok) {
     throw new ApiError(res.status, `POST /engagements -> ${res.status}`);
   }
-  const row = (await res.json()) as ApiEngagement;
-  return { id: row.id };
+  // POST /engagements returns the dispatch result { engagement, ingestToken }
+  // (lifecycle.service DispatchResult), NOT a flat engagement row like GET. The
+  // id lives at .engagement.id; reading .id gave undefined and routed the new
+  // run to /dashboard/undefined (the "Disconnected" SSE bug).
+  const row = (await res.json()) as { engagement: ApiEngagement; ingestToken: string };
+  return { id: row.engagement.id };
 }
 
 /** Halt a running engagement. No-op fallback when the backend is unreachable. */
