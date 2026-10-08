@@ -54,9 +54,9 @@ export class VaultService implements OnModuleInit {
     return this.env.vaultToken;
   }
 
-  // Ensure the Transit key exists. In prod the key is provisioned by Terraform;
-  // this is a no-op when it does (Vault returns 204 on an existing key). Also
-  // enables the dev/CI path where the spec creates the key itself.
+  // Best-effort ensure the Transit key exists. In prod the key is provisioned by
+  // Terraform; this is a no-op when it does (Vault returns 204 on an existing key).
+  // Also enables the dev/CI path where the spec creates the key itself.
   async onModuleInit(): Promise<void> {
     try {
       await this.applyToken();
@@ -64,7 +64,12 @@ export class VaultService implements OnModuleInit {
     } catch (err) {
       const status = (err as { response?: { statusCode?: number } })?.response
         ?.statusCode;
-      if (status !== 204) {
+      // 204: key already exists. 403: the least-privilege policy for the pod's
+      // Kubernetes-auth identity grants only encrypt/decrypt, not key management —
+      // so creation is correctly denied and the key is provisioned out-of-band
+      // (Terraform in prod, scripts/vault-k8s-auth.sh on the dev box). Both are the
+      // expected steady state, not a problem; only an unexpected status warns.
+      if (status !== 204 && status !== 403) {
         this.logger.warn(
           `Vault Transit key "${this.env.vaultTransitKey}" not created: ${status ?? 'unknown error'}. ` +
             'In prod this is provisioned by Terraform; ensure it exists before use.',
