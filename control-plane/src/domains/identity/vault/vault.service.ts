@@ -51,6 +51,7 @@ export class VaultService implements OnModuleInit {
   // enables the dev/CI path where the spec creates the key itself.
   async onModuleInit(): Promise<void> {
     try {
+      await this.applyToken();
       await this.client.transitCreateKey({ name: this.env.vaultTransitKey });
     } catch (err) {
       const status = (err as { response?: { statusCode?: number } })?.response
@@ -64,10 +65,20 @@ export class VaultService implements OnModuleInit {
     }
   }
 
+  // Resolve a live Vault token (k8s SA login in-cluster, else env) and apply it
+  // to the shared client before a Transit call. On k8s env.vaultToken is empty,
+  // so without this the client sends no token and Vault answers 403 → the request
+  // surfaces as a 500 (docs/control-plane.md §9.1). onModuleInit does not set it
+  // because the token is request-scoped and the k8s lease can rotate.
+  private async applyToken(): Promise<void> {
+    this.client.token = await this.authToken();
+  }
+
   // Encrypt via Vault Transit. Returns the vault:v1: prefixed ciphertext that is
   // the ONLY thing persisted in github_tokens (§4.A). base64 is per the Transit
   // API; the prefix version-tags the key generation for future rotation.
   async encrypt(plaintext: string): Promise<string> {
+    await this.applyToken();
     const { data } = await this.client.encryptData({
       name: this.env.vaultTransitKey,
       plaintext: Buffer.from(plaintext, 'utf8').toString('base64'),
@@ -82,6 +93,7 @@ export class VaultService implements OnModuleInit {
     const stored = ciphertext.startsWith(VAULT_PREFIX)
       ? ciphertext.slice(VAULT_PREFIX.length)
       : ciphertext;
+    await this.applyToken();
     const { data } = await this.client.decryptData({
       name: this.env.vaultTransitKey,
       ciphertext: stored,
