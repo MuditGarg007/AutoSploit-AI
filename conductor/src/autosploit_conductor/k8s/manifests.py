@@ -145,25 +145,23 @@ NAMESPACE_LABEL = "k8s:io.kubernetes.pod.namespace"
 # Pod is short-lived, runs under gVisor, pushes only to the in-namespace registry,
 # and dies with the namespace at teardown.
 #
-# DNS + `toFQDNs` IP learning: the namespace-wide policy's L7 `dns` rule (empty
-# endpointSelector) already governs the build Pod, so Cilium's DNS proxy observes
-# the build's lookups and learns these FQDNs' IPs — this policy only needs the
-# `toFQDNs` egress edges, not its own DNS rule.
+# DNS gating: the namespace-wide policy's L7 `dns` rule (empty endpointSelector)
+# already governs the build Pod, so Cilium's DNS proxy observes the build's lookups
+# and learns the answered IPs — this policy only needs the `toFQDNs` egress edges,
+# not its own DNS rule, and the egress stays DNS-gated (an IP literal the build never
+# resolved is still denied).
 BUILD_EGRESS_POLICY_NAME = "build-egress"
-# Curated public package mirrors a Dockerfile build commonly reaches, by hostname
-# (why this is a CiliumNetworkPolicy, not a CIDR NetworkPolicy — the mirrors are
-# CDN-backed and rotate IPs). Overridable per deploy via the builder's `fqdns`.
-BUILD_EGRESS_FQDNS = (
-    "pypi.org",                 # pip: index
-    "files.pythonhosted.org",   # pip: package downloads
-    "deb.debian.org",           # apt: Debian main + security (python:*-slim base)
-    "security.debian.org",      # apt: Debian security (older sources layout)
-    "archive.ubuntu.com",       # apt: Ubuntu
-    "security.ubuntu.com",      # apt: Ubuntu security
-    "ports.ubuntu.com",         # apt: Ubuntu non-amd64 ports
-    "dl-cdn.alpinelinux.org",   # apk: Alpine
-    "registry.npmjs.org",       # npm
-)
+# `toFQDNs` match patterns the build Pod may reach on `BUILD_EGRESS_PORTS`. Default
+# `*` = any DNS-resolvable host on http/https (owner sign-off, 2026-10-09): a curated
+# named-mirror list proved too fragile under Cilium `toFQDNs` because the public
+# package mirrors are CDN-backed and rotate IPs faster than enforcement learns them,
+# so apt/pip fetches raced and dropped. `*` is robust and still meaningfully scoped —
+# it applies to `role=build` ONLY (not the attacker/target), is DNS-proxy-gated, and
+# is limited to ports 80/443; the build Pod holds no model key or DB access and those
+# services are not on 80/443, so the marginal exposure is low. A deploy can tighten
+# this to an explicit pattern list via the builder's `fqdns` (each entry is a Cilium
+# `matchPattern`, where `*` is the only wildcard and `.` is literal).
+BUILD_EGRESS_FQDNS = ("*",)
 # apt defaults to http (80); pip/npm/apk use https (443). Allow both.
 BUILD_EGRESS_PORTS = (80, 443)
 
@@ -582,13 +580,14 @@ def build_egress_policy_manifest(
     fqdns: tuple[str, ...] = BUILD_EGRESS_FQDNS,
     ports: tuple[int, ...] = BUILD_EGRESS_PORTS,
 ) -> dict[str, Any]:
-    """The build-scoped egress CiliumNetworkPolicy — package mirrors for Kaniko RUN.
+    """The build-scoped egress CiliumNetworkPolicy — http/https out for Kaniko RUN.
 
     Selects `role=build` ONLY (not the whole namespace), so it is additive on top of
     the namespace-wide `attacker-egress` policy for the build Pod alone: the attacker
     and target keep their unchanged allow-set (SEAM-1 intact). The single egress edge
-    allows `toFQDNs` on `fqdns` over `ports` (80 for apt, 443 for pip/npm/apk), by
-    hostname — the namespace policy's L7 DNS rule lets Cilium learn these IPs.
+    allows `toFQDNs` matching `fqdns` (default `*` = any resolvable host) over `ports`
+    (80 for apt, 443 for pip/npm/apk). `toFQDNs` is DNS-proxy-gated by the namespace
+    policy's L7 DNS rule, so an unresolved IP literal is still denied.
 
     Applied just before the build Pod starts (provision), so there is no window where
     the build runs with egress it should not have; if it can't be applied the build
@@ -608,7 +607,7 @@ def build_egress_policy_manifest(
             },
             "egress": [
                 {
-                    "toFQDNs": [{"matchName": fqdn} for fqdn in fqdns],
+                    "toFQDNs": [{"matchPattern": fqdn} for fqdn in fqdns],
                     "toPorts": [
                         {
                             "ports": [

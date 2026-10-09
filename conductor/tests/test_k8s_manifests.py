@@ -374,23 +374,22 @@ def test_build_egress_policy_scoped_to_build_role_only():
     assert bp["spec"]["endpointSelector"] != {}
 
 
-def test_build_egress_policy_allows_package_mirrors_by_fqdn_on_80_and_443():
+def test_build_egress_policy_allows_any_host_on_80_and_443():
+    # Default is a wildcard `toFQDNs` on http/https — the curated named-mirror list
+    # proved too fragile under Cilium `toFQDNs` (CDN IP rotation raced enforcement).
     bp = m.build_egress_policy_manifest(ID)
     rule = bp["spec"]["egress"][0]
-    names = [f["matchName"] for f in rule["toFQDNs"]]
-    # Common Python/apt mirrors the testbed and real targets need at build time.
-    assert "pypi.org" in names
-    assert "files.pythonhosted.org" in names
-    assert "deb.debian.org" in names
+    assert rule["toFQDNs"] == [{"matchPattern": "*"}]
     ports = {p["port"] for p in rule["toPorts"][0]["ports"]}
     assert ports == {"80", "443"}  # apt http + pip/npm/apk https
     assert all(p["protocol"] == "TCP" for p in rule["toPorts"][0]["ports"])
 
 
 def test_build_egress_policy_fqdns_and_ports_overridable():
+    # A deploy can tighten the wildcard to explicit match patterns.
     bp = m.build_egress_policy_manifest(
         ID, fqdns=("mirror.internal",), ports=(443,)
     )
     rule = bp["spec"]["egress"][0]
-    assert rule["toFQDNs"] == [{"matchName": "mirror.internal"}]
+    assert rule["toFQDNs"] == [{"matchPattern": "mirror.internal"}]
     assert [p["port"] for p in rule["toPorts"][0]["ports"]] == ["443"]
