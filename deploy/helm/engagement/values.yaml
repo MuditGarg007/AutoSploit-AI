@@ -40,6 +40,10 @@ target:
 # The attacker: the harness image, key from the Secret, run files mounted read-only.
 attacker:
   image: ""
+  # The harness image is loaded onto the node out of band (not pushed to the
+  # per-engagement registry), so IfNotPresent lets a locally-present image satisfy
+  # the pull. A digest-pinned ref from a reachable registry can override to Always.
+  imagePullPolicy: IfNotPresent
   # Override the entrypoint for a stand-in probe image (e.g. the live-proof curl).
   # Empty command = image default entrypoint.
   command: []

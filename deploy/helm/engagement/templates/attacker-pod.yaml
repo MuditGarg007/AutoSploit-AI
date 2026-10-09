@@ -17,6 +17,7 @@ spec:
   containers:
     - name: attacker
       image: {{ .Values.attacker.image | quote }}
+      imagePullPolicy: {{ .Values.attacker.imagePullPolicy | default "IfNotPresent" }}
       {{- with .Values.attacker.command }}
       command:
         {{- toYaml . | nindent 8 }}

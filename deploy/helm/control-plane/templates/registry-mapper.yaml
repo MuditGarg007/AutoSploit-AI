@@ -1,0 +1,148 @@
+{{- if .Values.registryMapper.enabled }}
+# Node-pull wiring for the M8 per-engagement registry. See values.yaml
+# (registryMapper) for why this exists: the in-pod conductor cannot write the
+# node's containerd certs.d, so this DaemonSet does it on every node, mapping each
+# `registry.engagement-<id>.svc:5000` Service name to its ClusterIP over HTTP.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "control-plane.fullname" . }}-registry-mapper
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: registry-mapper
+---
+# Cluster-wide read on Services so the mapper can discover every engagement's
+# registry Service and its ClusterIP. Read-only — it never mutates the cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "control-plane.fullname" . }}-registry-mapper
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: registry-mapper
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "control-plane.fullname" . }}-registry-mapper
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: registry-mapper
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "control-plane.fullname" . }}-registry-mapper
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "control-plane.fullname" . }}-registry-mapper
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "control-plane.fullname" . }}-registry-mapper
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: registry-mapper
+data:
+  reconcile.sh: |
+    #!/bin/sh
+    # Reconcile containerd certs.d host mappings for per-engagement registries.
+    # Desired state = every Service named `registry` carrying the `engagement`
+    # label; each maps registry.<ns>.svc:<port> -> http://<clusterIP>:<port>.
+    # Idempotent and self-pruning: a dir for a namespace with no live registry
+    # Service is removed, so a torn-down engagement leaves no stale mapping.
+    set -u
+    CERTS_ROOT="/host/certs.d"
+    PORT="${REGISTRY_PORT:-5000}"
+    INTERVAL="${POLL_INTERVAL:-10}"
+    echo "registry-mapper: certs_root=${CERTS_ROOT} port=${PORT} interval=${INTERVAL}s"
+    while true; do
+      desired="$(kubectl get svc -A -l engagement \
+        -o go-template='{{`{{range .items}}{{if eq .metadata.name "registry"}}{{.metadata.namespace}} {{.spec.clusterIP}}{{"\n"}}{{end}}{{end}}`}}' \
+        2>/dev/null || true)"
+      # Write/refresh a mapping per live registry Service.
+      printf '%s\n' "$desired" | while IFS=' ' read -r ns ip; do
+        [ -n "$ns" ] || continue
+        [ -n "$ip" ] && [ "$ip" != "None" ] || continue
+        dir="${CERTS_ROOT}/registry.${ns}.svc:${PORT}"
+        mkdir -p "$dir"
+        tmp="${dir}/.hosts.toml.tmp"
+        {
+          echo "server = \"http://${ip}:${PORT}\""
+          echo "[host.\"http://${ip}:${PORT}\"]"
+          echo "  capabilities = [\"pull\", \"resolve\"]"
+        } > "$tmp"
+        mv "$tmp" "${dir}/hosts.toml"
+      done
+      # Prune mappings this controller owns (engagement-* only) whose namespace is
+      # no longer in the desired set — includes any stale manual fixtures.
+      for dir in "${CERTS_ROOT}"/registry.engagement-*.svc:"${PORT}"; do
+        [ -e "$dir" ] || continue
+        base="$(basename "$dir")"
+        ns="${base#registry.}"
+        ns="${ns%.svc:${PORT}}"
+        if ! printf '%s\n' "$desired" | grep -q "^${ns} "; then
+          rm -rf "$dir"
+          echo "registry-mapper: pruned ${base}"
+        fi
+      done
+      sleep "$INTERVAL"
+    done
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "control-plane.fullname" . }}-registry-mapper
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: registry-mapper
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/component: registry-mapper
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/component: registry-mapper
+    spec:
+      serviceAccountName: {{ include "control-plane.fullname" . }}-registry-mapper
+      # Run on every node, including control-plane-tainted ones (single-node kind).
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: registry-mapper
+          image: {{ .Values.registryMapper.image | quote }}
+          imagePullPolicy: {{ .Values.registryMapper.imagePullPolicy }}
+          command: ["/bin/sh", "/scripts/reconcile.sh"]
+          env:
+            - name: REGISTRY_PORT
+              value: {{ .Values.registryMapper.registryPort | quote }}
+            - name: POLL_INTERVAL
+              value: {{ .Values.registryMapper.pollIntervalSeconds | quote }}
+          # Writes the node hostPath; containerd certs.d is root-owned.
+          securityContext:
+            runAsUser: 0
+          resources:
+            {{- toYaml .Values.registryMapper.resources | nindent 12 }}
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: certs-d
+              mountPath: /host/certs.d
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ include "control-plane.fullname" . }}-registry-mapper
+        - name: certs-d
+          hostPath:
+            path: {{ .Values.registryMapper.certsDir | quote }}
+            type: DirectoryOrCreate
+{{- end }}
