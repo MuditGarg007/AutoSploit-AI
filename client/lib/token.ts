@@ -72,8 +72,27 @@ export function captureTokenFromUrl(): boolean {
  * token, or null when the session is gone. Cross-origin, so credentials must be
  * included to send the cookie.
  */
-export async function refreshToken(): Promise<string | null> {
-  if (!API_BASE) return null;
+// A single in-flight refresh shared by every caller. The refresh token rotates
+// on each use: the server demotes the presented token to "prev" and, if that
+// demoted token is ever presented again, treats it as theft and revokes the
+// whole session. So two concurrent POST /auth/refresh calls are fatal: the first
+// rotates the cookie, the second still holds the now-stale cookie and gets the
+// session revoked (the user is logged out and every stream drops). authedFetch
+// (refresh-on-401) and getFreshToken (the SSE path) are independent callers that
+// both tend to fire as the access token nears expiry, so without coalescing they
+// collide. Sharing one promise presents the cookie exactly once per rotation.
+let inflightRefresh: Promise<string | null> | null = null;
+
+export function refreshToken(): Promise<string | null> {
+  if (!API_BASE) return Promise.resolve(null);
+  if (inflightRefresh) return inflightRefresh;
+  inflightRefresh = doRefresh().finally(() => {
+    inflightRefresh = null;
+  });
+  return inflightRefresh;
+}
+
+async function doRefresh(): Promise<string | null> {
   try {
     const res = await fetch(`${API_BASE}/auth/refresh`, {
       method: "POST",
