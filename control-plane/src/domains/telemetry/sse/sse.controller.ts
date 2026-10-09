@@ -4,6 +4,7 @@ import {
   Headers,
   Inject,
   Param,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -34,11 +35,19 @@ export class SseController {
     @CurrentUser() auth: AuthenticatedUser,
     @Param('id') id: string,
     @Headers('last-event-id') lastEventId: string | undefined,
+    @Query('last_event_id') lastEventIdQuery: string | undefined,
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply,
   ): Promise<void> {
     // Ownership before any byte leaves: 401/404 via assertOwned.
     await this.lifecycle.assertOwned(id, auth.id);
+
+    // Resume cursor: the Last-Event-ID header is set by the browser's native
+    // EventSource reconnect, but a client that must rebuild the EventSource (to
+    // swap in a refreshed access token) cannot set request headers, so it passes
+    // the same cursor as a `last_event_id` query param. Header wins when both are
+    // present.
+    const resumeFrom = lastEventId ?? lastEventIdQuery;
 
     // Raw SSE: hijack the Fastify reply so the async iterator can write directly
     // to the socket (avoids @Sse() adapter quirks on fastify 4.28.1, §9.1 note).
@@ -59,7 +68,7 @@ export class SseController {
     try {
       for await (const frame of this.gateway.subscribe(
         id,
-        lastEventId ?? null,
+        resumeFrom ?? null,
         abort.signal,
       )) {
         if (abort.signal.aborted) break;

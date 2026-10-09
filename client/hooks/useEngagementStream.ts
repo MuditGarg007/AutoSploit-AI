@@ -19,7 +19,7 @@ import {
   type EngagementView,
 } from "@/lib/events";
 import { driveMockStream } from "@/lib/mock-stream";
-import { getToken } from "@/lib/token";
+import { getFreshToken, refreshToken } from "@/lib/token";
 
 export type StreamStatus =
   | "connecting"
@@ -61,33 +61,91 @@ export function useEngagementStream(
       return () => handle.cancel();
     }
 
-    // Live path.
+    // Live path. The access token is short-lived (15 min); EventSource cannot
+    // set an Authorization header and does not retry an HTTP error (a 401 on an
+    // expired token drives it straight to CLOSED with no reconnect), so we
+    // manage the token and reconnect ourselves:
+    //  - connect with a proactively-refreshed token (query param — the
+    //    SessionGuard accepts it on the stream route only);
+    //  - let native EventSource auto-reconnect handle transient network drops
+    //    (it resends the Last-Event-ID header on its own);
+    //  - on a hard CLOSE (the auth-expiry signature), refresh the token and
+    //    rebuild the EventSource, resuming from the last event id via a query
+    //    param since the rebuilt socket's first request carries no header.
     setStatus("connecting");
-    // EventSource cannot set an Authorization header, so the access token rides
-    // as a query param; the SessionGuard accepts it on the stream route only.
-    const token = getToken();
-    const url =
-      `${API_BASE}/engagements/${encodeURIComponent(engagementId)}/stream` +
-      (token ? `?access_token=${encodeURIComponent(token)}` : "");
-    const es = new EventSource(url, { withCredentials: true });
 
-    es.onopen = () => setStatus("live");
+    let es: EventSource | null = null;
+    let cancelled = false;
+    let reconnecting = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    es.onmessage = (msg) => {
-      try {
-        const parsed = JSON.parse(msg.data) as Omit<Ev, "id">;
-        push({ ...parsed, id: msg.lastEventId } as EngagementEvent);
-      } catch {
-        // Ignore keep-alive comments / malformed frames.
-      }
+    const open = (token: string | null) => {
+      if (cancelled) return;
+      const params = new URLSearchParams();
+      if (token) params.set("access_token", token);
+      // Resume exactly after the last event we folded in, so a reconnect never
+      // replays already-seen phases / tool calls (reduceEvent is not idempotent
+      // for those). Empty cursor on first connect → server replays the backlog.
+      const cursor = viewRef.current.lastEventId;
+      if (cursor) params.set("last_event_id", cursor);
+      const qs = params.toString();
+      es = new EventSource(
+        `${API_BASE}/engagements/${encodeURIComponent(engagementId)}/stream` +
+          (qs ? `?${qs}` : ""),
+        { withCredentials: true },
+      );
+
+      es.onopen = () => {
+        if (!cancelled) setStatus("live");
+      };
+
+      es.onmessage = (msg) => {
+        try {
+          const parsed = JSON.parse(msg.data) as Omit<Ev, "id">;
+          push({ ...parsed, id: msg.lastEventId } as EngagementEvent);
+        } catch {
+          // Ignore keep-alive comments / malformed frames.
+        }
+      };
+
+      es.onerror = () => {
+        if (cancelled || !es) return;
+        if (es.readyState !== EventSource.CLOSED) {
+          // Transient drop: native EventSource is already reconnecting with the
+          // Last-Event-ID header and the current (still-valid) token.
+          setStatus("reconnecting");
+          return;
+        }
+        // Hard close: almost always an expired token (EventSource will not retry
+        // an HTTP error). Refresh and rebuild once; a failed refresh means the
+        // session is truly gone, so stay closed.
+        es.close();
+        es = null;
+        if (reconnecting) return;
+        reconnecting = true;
+        setStatus("reconnecting");
+        void refreshToken().then((token) => {
+          reconnecting = false;
+          if (cancelled) return;
+          if (!token) {
+            setStatus("closed");
+            return;
+          }
+          reconnectTimer = setTimeout(() => open(token), 500);
+        });
+      };
     };
 
-    es.onerror = () => {
-      // EventSource auto-reconnects with Last-Event-ID; reflect the gap.
-      setStatus(es.readyState === EventSource.CLOSED ? "closed" : "reconnecting");
-    };
+    void getFreshToken().then((token) => {
+      if (cancelled) return;
+      open(token);
+    });
 
-    return () => es.close();
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      es?.close();
+    };
   }, [engagementId, opts.mock]);
 
   return { view, status };

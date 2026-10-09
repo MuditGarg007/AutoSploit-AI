@@ -90,6 +90,44 @@ export async function refreshToken(): Promise<string | null> {
   }
 }
 
+/**
+ * True when `token` is missing, unparseable, or expires within `withinSec`
+ * seconds. Decodes the JWT payload locally (no network) to read `exp`; a token
+ * we cannot read is treated as expired so the caller refreshes rather than
+ * sending something the server will reject. Never throws.
+ */
+export function tokenExpiresWithin(
+  token: string | null,
+  withinSec: number,
+): boolean {
+  if (!token) return true;
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return true;
+    const json = JSON.parse(
+      atob(payload.replace(/-/g, "+").replace(/_/g, "/")),
+    ) as { exp?: unknown };
+    if (typeof json.exp !== "number") return true;
+    return json.exp * 1000 <= Date.now() + withinSec * 1000;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The access token to send now, refreshed first if it is missing or about to
+ * expire. Keeps the happy path network-free (a comfortably-valid token is
+ * returned as-is, so the refresh cookie is not rotated needlessly) and falls
+ * back to whatever token we hold if the refresh fails. Returns null only when
+ * there is no usable token at all.
+ */
+export async function getFreshToken(withinSec = 60): Promise<string | null> {
+  const token = getToken();
+  if (!tokenExpiresWithin(token, withinSec)) return token;
+  const refreshed = await refreshToken();
+  return refreshed ?? token;
+}
+
 /** Revoke the server session and drop the local token (best effort). */
 export async function signOutRequest(): Promise<void> {
   const token = getToken();
