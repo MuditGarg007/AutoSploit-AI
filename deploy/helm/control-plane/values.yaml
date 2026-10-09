@@ -142,7 +142,8 @@ registryMapper:
   enabled: true
   # An image carrying `kubectl` and a POSIX `sh`, able to run as root (it writes the
   # node hostPath). Pin to a tag matching the cluster's kubectl skew policy.
-  image: rancher/kubectl:v1.31.0
+  # (rancher/kubectl is a kubectl-only minimal image with no /bin/sh — do not use it.)
+  image: alpine/k8s:1.31.0
   imagePullPolicy: IfNotPresent
   # containerd's certs.d root on the node (containerd `config_path`, set up by
   # scripts/m4-bootstrap.sh). Mounted as a hostPath.
