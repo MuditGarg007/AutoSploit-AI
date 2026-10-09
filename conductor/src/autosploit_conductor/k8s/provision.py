@@ -165,6 +165,7 @@ def phaseb_provision(
                 destination=destination,
                 dockerfile=dockerfile,
                 context_configmap=context_configmap,
+                context_files=list(prepared.files) if prepared.files is not None else None,
                 registry_mirror=prepared.mirror,
             )
             outcome = watch_pod(

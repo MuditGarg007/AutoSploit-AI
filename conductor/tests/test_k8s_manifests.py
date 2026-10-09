@@ -121,14 +121,24 @@ def test_build_pod_mounts_in_cluster_context_configmap_readonly():
         context=f"dir://{m.BUILD_CONTEXT_MOUNT}",
         destination="reg/target:1",
         context_configmap="build-context",
+        context_files=["Dockerfile", "requirements.txt", "app.py"],
     )
     spec = pod["spec"]
     vol = spec["volumes"][0]
     assert vol["configMap"]["name"] == "build-context"
-    mount = spec["containers"][0]["volumeMounts"][0]
-    assert mount["name"] == vol["name"]
-    assert mount["mountPath"] == m.BUILD_CONTEXT_MOUNT
-    assert mount["readOnly"] is True
+    # Each key is mounted by subPath at <mount>/<key>, read-only. A whole-volume
+    # ConfigMap mount would use the atomic-writer `..data` symlink indirection,
+    # which Kaniko copies verbatim so a `COPY`+`RUN` of the file fails; subPath
+    # projects the real bytes.
+    mounts = spec["containers"][0]["volumeMounts"]
+    assert all(mnt["name"] == vol["name"] for mnt in mounts)
+    assert all(mnt["readOnly"] is True for mnt in mounts)
+    by_subpath = {mnt["subPath"]: mnt["mountPath"] for mnt in mounts}
+    assert by_subpath == {
+        "Dockerfile": f"{m.BUILD_CONTEXT_MOUNT}/Dockerfile",
+        "requirements.txt": f"{m.BUILD_CONTEXT_MOUNT}/requirements.txt",
+        "app.py": f"{m.BUILD_CONTEXT_MOUNT}/app.py",
+    }
     # Still no host mount / socket / privilege — the invariant holds with a context.
     blob = json.dumps(pod)
     assert "hostPath" not in blob

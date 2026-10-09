@@ -79,11 +79,13 @@ class FakeCluster:
         destination,
         dockerfile=m.DEFAULT_DOCKERFILE,
         context_configmap=None,
+        context_files=None,
         registry_mirror=None,
     ):
         self.calls.append(
             ("build_pod", context, destination, dockerfile, context_configmap, registry_mirror)
         )
+        self.build_context_files = context_files
 
     def pod_phase(self, name: str):
         seq = self._phases.get(name, ["Running"])
@@ -171,6 +173,11 @@ def test_happy_path_clones_mirrors_and_builds_via_dir_context():
     assert cluster.context_files is not None
     assert cluster.context_files["Dockerfile"] == _DOCKERFILE
     assert "app.py" in cluster.context_files
+
+    # The build Pod is told the context keys so the manifest can mount each by
+    # subPath (no atomic-writer symlink that breaks Kaniko COPY/RUN).
+    assert cluster.build_context_files is not None
+    assert set(cluster.build_context_files) == set(cluster.context_files)
 
     # The build Pod uses a `dir://` context from that ConfigMap + the mirror — never
     # a `git://` external context (which the live egress would deny).

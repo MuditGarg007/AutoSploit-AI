@@ -206,6 +206,7 @@ class EngagementCluster:
         dockerfile: str = m.DEFAULT_DOCKERFILE,
         image: str = m.KANIKO_IMAGE,
         context_configmap: str | None = None,
+        context_files: Sequence[str] | None = None,
         registry_mirror: str | None = None,
     ) -> None:
         """Launch the Kaniko build Pod that builds the target image (M8).
@@ -218,6 +219,9 @@ class EngagementCluster:
         `context_configmap`, when set, supplies the build context from an in-cluster
         ConfigMap (pair with a `dir://` `context`) so the build needs no external
         egress — the M8 live-proof path under the M7 default-deny matrix.
+        `context_files` lists that ConfigMap's keys so the manifest mounts each by
+        `subPath` (real file content, no atomic-writer symlink that breaks Kaniko
+        `COPY`/`RUN`).
 
         `registry_mirror`, when set, forwards through so Kaniko resolves external
         `FROM` bases against the in-cluster mirror the conductor preloaded (M5),
@@ -232,6 +236,7 @@ class EngagementCluster:
                 dockerfile=dockerfile,
                 image=image,
                 context_configmap=context_configmap,
+                context_files=context_files,
                 registry_mirror=registry_mirror,
             ),
         )

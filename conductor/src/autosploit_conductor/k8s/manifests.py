@@ -21,7 +21,7 @@ review can trust them without re-reading the cluster:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 # The gVisor RuntimeClass name installed by M4 (`scripts/m4-bootstrap.sh`:
@@ -351,6 +351,7 @@ def kaniko_build_pod_manifest(
     dockerfile: str = DEFAULT_DOCKERFILE,
     image: str = KANIKO_IMAGE,
     context_configmap: str | None = None,
+    context_files: Sequence[str] | None = None,
     context_mount: str = BUILD_CONTEXT_MOUNT,
     registry_mirror: str | None = None,
 ) -> dict[str, Any]:
@@ -432,9 +433,32 @@ def kaniko_build_pod_manifest(
         "containers": [container],
     }
     if context_configmap is not None:
-        container["volumeMounts"] = [
-            {"name": "build-context", "mountPath": context_mount, "readOnly": True}
-        ]
+        # Mount each context file by `subPath`, NOT the whole ConfigMap as one
+        # volume. A whole-volume ConfigMap mount uses Kubernetes' atomic-writer
+        # `..data` symlink indirection (every key is a symlink into a hidden
+        # timestamped dir); Kaniko then copies those symlinks verbatim on `COPY`,
+        # so a `COPY requirements.txt .` lands a symlink whose target does not
+        # exist in the built image and a later `RUN` reading the file fails with
+        # "No such file or directory". A `subPath` mount projects the real file
+        # content with no symlink, so `COPY`/`RUN` see the actual bytes. Keys are
+        # flat (a ConfigMap key cannot contain `/`), so one mount per key covers
+        # the context. Falls back to the whole-volume mount only when the file
+        # list is unknown (no production caller hits that path).
+        files = list(context_files) if context_files is not None else []
+        if files:
+            container["volumeMounts"] = [
+                {
+                    "name": "build-context",
+                    "mountPath": f"{context_mount}/{key}",
+                    "subPath": key,
+                    "readOnly": True,
+                }
+                for key in files
+            ]
+        else:
+            container["volumeMounts"] = [
+                {"name": "build-context", "mountPath": context_mount, "readOnly": True}
+            ]
         spec["volumes"] = [
             {"name": "build-context", "configMap": {"name": context_configmap}}
         ]
