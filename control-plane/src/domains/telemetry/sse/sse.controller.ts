@@ -14,6 +14,7 @@ import { SessionGuard } from '../../../core/guards/session.guard.js';
 import { CurrentUser } from '../../../core/guards/current-user.decorator.js';
 import type { AuthenticatedUser } from '../../../core/guards/session.guard.js';
 import { LifecycleService } from '../../lifecycle/lifecycle.service.js';
+import { EnvService } from '../../../config/env.service.js';
 import { SseGateway } from './sse.gateway.js';
 
 // Read end of the log. Raw Nest route (NOT a tRPC subscription — §9.1) so native
@@ -25,6 +26,7 @@ export class SseController {
   constructor(
     @Inject(SseGateway) private readonly gateway: SseGateway,
     @Inject(LifecycleService) private readonly lifecycle: LifecycleService,
+    @Inject(EnvService) private readonly env: EnvService,
   ) {}
 
   // GET /engagements/:id/stream — authorize ownership, replay recent backlog from
@@ -53,12 +55,26 @@ export class SseController {
     // to the socket (avoids @Sse() adapter quirks on fastify 4.28.1, §9.1 note).
     const raw = reply.raw;
     reply.hijack();
-    raw.writeHead(200, {
+
+    // CORS: the global enableCors layer runs in the Fastify reply lifecycle
+    // (onRequest/onSend), which hijack() bypasses — raw.writeHead emits only the
+    // literal header object. A cross-origin EventSource(url, {withCredentials:true})
+    // needs ACAO=exact-origin + ACAC=true on THIS 200 response or the browser
+    // blocks it → onerror → "Reconnecting" loop. Echo the request Origin only when
+    // it is in the allowlist; never reflect an arbitrary origin with credentials.
+    const headers: Record<string, string> = {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
-    });
+    };
+    const origin = req.headers.origin;
+    if (origin && this.env.frontendUrls.includes(origin)) {
+      headers['Access-Control-Allow-Origin'] = origin;
+      headers['Access-Control-Allow-Credentials'] = 'true';
+      headers['Vary'] = 'Origin';
+    }
+    raw.writeHead(200, headers);
 
     const abort = new AbortController();
     const onClose = () => abort.abort();
