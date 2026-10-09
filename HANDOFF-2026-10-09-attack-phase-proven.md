@@ -120,16 +120,64 @@ kubectl delete ns $NS               # stop it; mapper prunes the certs.d entry w
 
 ---
 
+## SSE "Disconnected" — root-caused and fixed (2026-10-09, later same day)
+
+The prior handoff guessed the dashboard "Disconnected" worry was unfounded because
+ingest (`IngestController POST /engagements/:id/events`) was working. That was the
+wrong half: ingest is server-to-server. The browser's read side
+(`GET /engagements/:id/stream`) was failing on its own. The dashboard really did show
+"Disconnected" live.
+
+**Root cause (client).** `client/hooks/useEngagementStream.ts` read the access token
+once with `getToken()`, baked it into the EventSource URL, and never refreshed it.
+Access tokens live 15 min (`ACCESS_TOKEN_TTL_SEC`, default 900), and EventSource does
+**not** retry an HTTP 401 — it goes straight to `readyState === CLOSED`, which the hook
+maps to status `closed` → the `ConnectionStatus` label "Disconnected", permanently, no
+recovery. A dashboard opened with a stale localStorage token hit this immediately.
+`authedFetch` (`client/lib/api.ts`) already did refresh-on-401-then-retry; the SSE path
+was the one authenticated path that didn't. Server-side CORS, FRONTEND_URL
+(`https://autosploit.muditgarg.xyz`), the Caddy route
+(`api.autosploit.muditgarg.xyz` → NodePort 30080 → plane:3000), and the
+`access_token` query-param fallback in `SessionGuard` were all verified correct — the
+fault was purely the missing client refresh.
+
+**Fix — committed and pushed to `main` as `723b551`** (three files):
+- `client/lib/token.ts` — `tokenExpiresWithin()` (local JWT `exp` decode, no network)
+  and `getFreshToken()` (refresh only when the token is missing or within 60s of
+  expiry, so a comfortably-valid token is not rotated needlessly).
+- `client/hooks/useEngagementStream.ts` — connect with a proactively-refreshed token;
+  let native EventSource handle transient drops (it resends the `Last-Event-ID`
+  header); on a hard `CLOSED`, refresh the token and rebuild the socket, resuming from
+  the tracked cursor. A failed refresh stays `closed` (session genuinely gone).
+- `control-plane/.../sse/sse.controller.ts` — accept `last_event_id` as a **query**
+  param fallback to the `Last-Event-ID` header (a rebuilt EventSource cannot set
+  request headers, and `reduceEvent` is not idempotent for `phase`/`tool_call`, so a
+  reconnect must resume cursor-exact rather than replay the backlog). Header wins when
+  both are present.
+
+Verified: control-plane `typecheck` + `telemetry.spec` (ingest→SSE integration) pass;
+client `typecheck` + `eslint` + `events.test` (15) pass.
+
+**Deploy state of this fix:**
+- **Frontend** is client-only and rides the next Vercel auto-deploy of `main`. It fixes
+  the dominant symptom (stale token at page load) on its own.
+- **Backend** `last_event_id` query support is committed but **not deployed** — it needs
+  a control-plane **image rebuild + Helm roll** (the plane is still on image
+  `508c75d`). Until then the old server ignores the query param on a manual reconnect
+  and treats it as a fresh subscribe → replays the backlog → duplicate phases/tool
+  calls in the view. This only triggers on a mid-stream token expiry (rare within one
+  engagement; the proactive refresh prevents most hard closes), so the frontend deploy
+  alone is most of the win; the backend rebuild closes the remaining correctness gap.
+
 ## Still open (carry forward)
 
 - **Attack-phase lifecycle tail** — this session **stopped the engagement right after
   proving the attacker runs and exploits** (deleted the namespace), so the terminal
   path was not watched: does the engagement reach `completed`, write `conductor.json`,
   and tear down cleanly on its own; and does the dashboard detail page render the
-  findings/events stream through to the end. The SSE events route is mapped
-  (`IngestController /engagements/:id/events POST`) and events were ingesting, so the
-  prior "Disconnected" worry looks unfounded — but the full stream to completion is
-  still unconfirmed.
+  findings/events stream through to the end. The SSE "Disconnected" fault that would
+  have broken that render is now fixed (above), but the full stream to completion is
+  still unconfirmed end to end.
 - **Stale worker job on a deleted engagement** — the control-plane log repeats
   `engagement a1008402-…: transition … skipped: Illegal state transition: attacking -> …`
   for an engagement whose namespace is long gone. A dead BullMQ job retrying against a
