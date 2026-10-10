@@ -73,7 +73,8 @@ spec:
             - "--memory=1G"
             - "--reserve-memory=0M"
             - "--overprovisioned"
-            - "--node-id=0"
+            # No --node-id: it was removed in Redpanda v24+ (auto-assigned); passing
+            # it aborts boot with "unrecognised option '--node-id=0'".
             - "--check=false"
             # Listen on all interfaces; advertise the in-cluster Service name so
             # kafkajs clients (the plane) reconnect to the broker via DNS after the
