@@ -69,13 +69,17 @@ spec:
           image: docker.redpanda.com/redpandadata/redpanda:v24.1.11
           command: ["redpanda", "start"]
           args:
+            # dev-container mode bundles --overprovisioned and skips the host-env
+            # startup checks (fsync/swap/fs-type) that abort boot on a kind node.
+            # It replaces the per-flag --overprovisioned/--check=false and the
+            # --node-id=0 that older examples used — all three were removed/renamed
+            # in Redpanda v24+ and abort with "unrecognised option".
+            - "--mode=dev-container"
+            # Pin the footprint small for the 8 GB box (dev-container otherwise
+            # grabs all cores): single reactor, 1 GB, no reserve.
             - "--smp=1"
             - "--memory=1G"
             - "--reserve-memory=0M"
-            - "--overprovisioned"
-            # No --node-id: it was removed in Redpanda v24+ (auto-assigned); passing
-            # it aborts boot with "unrecognised option '--node-id=0'".
-            - "--check=false"
             # Listen on all interfaces; advertise the in-cluster Service name so
             # kafkajs clients (the plane) reconnect to the broker via DNS after the
             # bootstrap metadata round-trip.
