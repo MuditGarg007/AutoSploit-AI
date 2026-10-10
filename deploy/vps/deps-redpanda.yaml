@@ -1,0 +1,122 @@
+# Redpanda (Kafka API) for the control plane on the Contabo VPS kind cluster.
+#
+# Redpanda is the telemetry backbone (slice D). The ingest endpoint produces every
+# finding / cost / tool-call event to the Kafka topic, and the projector consumer
+# reads it back into the Postgres `findings` / `cost` tables that the dashboard's
+# overview tiles and per-run rows read. With NO broker, ingest.service fails closed
+# — `if (!producer) throw 503 'Ingest disabled (no broker configured)'` — so every
+# event is rejected, nothing is projected, and the dashboard shows 0 findings / $0
+# for every engagement even after it completes. (This is the Kafka analogue of the
+# Redis missing-dep gap in deps-redis.yaml.)
+#
+# Like the other deps, the control-plane Helm chart does NOT ship this — the chart's
+# `external.kafkaBrokers` is an endpoint ops points at, and ops owns the dep. The
+# Service name `redpanda` + port 9092 are exactly what `external.kafkaBrokers=
+# redpanda:9092` (the chart default) resolves to. NOT part of the Helm release, so
+# `helm upgrade` never touches it. Re-apply by hand if the cluster is recreated:
+#
+#   kubectl apply -f deploy/vps/deps-redpanda.yaml
+#
+# Then point the plane at it and restart so the producer + consumers initialise:
+#   helm upgrade control-plane deploy/helm/control-plane/ -n autosploit-system \
+#     --reuse-values --set external.kafkaBrokers=redpanda:9092
+#
+# Schema Registry is NOT required: the pipeline produces/consumes plain JSON
+# (ingest.service JSON.stringify → projector JSON.parse), and schema-registry.service
+# is a no-op when SCHEMA_REGISTRY_URL is unset. Leave it unset on this box.
+#
+# Memory note (runbook §6): Redpanda is the hungriest dep on the 8 GB box, so it is
+# pinned small — `--smp 1 --memory 1G --reserve-memory 0M --overprovisioned`. This
+# only leaves room at engagement concurrency 1. Raise the memory flag and the limit
+# together if a bigger budget is proven.
+#
+# Non-persistent by design (emptyDir): the topic is a transient transport, and the
+# durable record is the Postgres projection the projector writes. A restart drops
+# un-projected in-flight events, which matches the ephemeral redis dep. Add a PVC
+# only if at-least-once durability across a broker restart becomes a requirement.
+#
+# Verify:
+#   kubectl -n autosploit-system rollout status deploy/redpanda
+#   kubectl -n autosploit-system exec deploy/redpanda -- rpk cluster info
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redpanda
+  namespace: autosploit-system
+  labels:
+    app: redpanda
+    app.kubernetes.io/name: redpanda
+    app.kubernetes.io/component: event-bus
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: a single-node broker on one Service must never
+  # have two pods briefly claiming the same advertised address / node-id.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redpanda
+  template:
+    metadata:
+      labels:
+        app: redpanda
+        app.kubernetes.io/name: redpanda
+        app.kubernetes.io/component: event-bus
+    spec:
+      containers:
+        - name: redpanda
+          image: docker.redpanda.com/redpandadata/redpanda:v24.1.11
+          command: ["redpanda", "start"]
+          args:
+            - "--smp=1"
+            - "--memory=1G"
+            - "--reserve-memory=0M"
+            - "--overprovisioned"
+            - "--node-id=0"
+            - "--check=false"
+            # Listen on all interfaces; advertise the in-cluster Service name so
+            # kafkajs clients (the plane) reconnect to the broker via DNS after the
+            # bootstrap metadata round-trip.
+            - "--kafka-addr=PLAINTEXT://0.0.0.0:9092"
+            - "--advertise-kafka-addr=PLAINTEXT://redpanda:9092"
+          ports:
+            - name: kafka
+              containerPort: 9092
+          resources:
+            requests: { cpu: "100m", memory: "1Gi" }
+            limits: { cpu: "1000m", memory: "1536Mi" }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redpanda/data
+          readinessProbe:
+            exec:
+              command: ["rpk", "cluster", "info"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: kafka
+            initialDelaySeconds: 20
+            periodSeconds: 15
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+  namespace: autosploit-system
+  labels:
+    app: redpanda
+    app.kubernetes.io/name: redpanda
+spec:
+  type: ClusterIP
+  selector:
+    app: redpanda
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: 9092
