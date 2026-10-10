@@ -202,6 +202,13 @@ endpoints you point at — ops owns the stateful deps). For H3 the plane must re
 stand those deps up first (minimal single replicas; Redpanda with reduced memory flags — it
 is the hungriest on 8 GB). Reports go to **Cloudflare R2** (§3.2), an S3-protocol config swap.
 
+> **Redis is now a manifest, not a one-liner.** It was previously created imperatively, so a
+> node/pod wipe dropped it with nothing to restore from (engagements then hang at "starting",
+> quota-meter log is the tell). Apply `deploy/vps/deps-redis.yaml` (Deployment + Service
+> `redis:6379`, non-persistent by design) — `kubectl apply -f deploy/vps/deps-redis.yaml` — and
+> re-apply after any cluster recreate. It is NOT part of the Helm release. The other stateful
+> deps (Postgres/Redpanda/Vault) are still stood up by hand per below.
+
 ```bash
 kubectl create namespace autosploit-system
 kubectl create secret docker-registry ghcr-pull -n autosploit-system \
