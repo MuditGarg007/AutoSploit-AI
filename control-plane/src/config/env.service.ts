@@ -42,10 +42,17 @@ export class EnvService {
   // (§8.1). Optional at boot so pre-P3 slices (health/repos/identity) can start
   // without it; IngestTokenService fails fast if used without a key.
   readonly ingestTokenSigningKey = process.env.INGEST_TOKEN_SIGNING_KEY ?? '';
-  // The plane's own base URL the worker POSTs relayed events to. Defaults to the
-  // local port so P3 works without extra env; set PUBLIC_BASE_URL behind a proxy.
+  // The plane's public base URL (behind a proxy / for external links). Defaults
+  // to the local port so a bare dev boot works without extra env.
   readonly publicBaseUrl =
     process.env.PUBLIC_BASE_URL ?? `http://localhost:${this.port}`;
+  // Where the worker POSTs relayed harness events. The worker runs IN the plane
+  // pod alongside the HTTP server, so this must stay a loopback address — never
+  // publicBaseUrl, which is a proxy/Service host (e.g. `http://control-plane`)
+  // that does not resolve from inside the pod and makes every relay `fetch` fail,
+  // so no event reaches the ingest endpoint and the dashboard stays empty.
+  readonly ingestRelayBaseUrl =
+    process.env.INGEST_RELAY_BASE_URL ?? `http://localhost:${this.port}`;
 
   // --- Frontend bridge (CORS allowlist + OAuth post-login redirect) ---
   // Comma-separated list of allowed browser origins (no trailing slash). The

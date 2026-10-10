@@ -20,7 +20,7 @@ export class IngestRelay {
   ): Promise<void> {
     try {
       const res = await fetch(
-        `${this.env.publicBaseUrl}/engagements/${engagementId}/events`,
+        `${this.env.ingestRelayBaseUrl}/engagements/${engagementId}/events`,
         {
           method: 'POST',
           headers: {
