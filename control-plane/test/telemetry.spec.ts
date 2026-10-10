@@ -249,7 +249,7 @@ describe('Telemetry (D-a) — live path: ingest → Redpanda → SSE bridge → 
     const started = Date.now();
     const sub = sseCollect(
       `http://localhost:${app.getHttpServer().address().port}/engagements/${engagementId}/stream`,
-      { headers: { authorization: `Bearer ${accessToken}` }, until: (f) => f.event === 'phase' },
+      { headers: { authorization: `Bearer ${accessToken}` }, until: (f) => eventOf(f)?.type === 'phase' },
     );
 
     // Valid event → 202.
@@ -264,9 +264,11 @@ describe('Telemetry (D-a) — live path: ingest → Redpanda → SSE bridge → 
 
     const frames = await sub;
     expect(frames.length).toBeGreaterThan(0);
-    const phase = frames.find((f) => f.event === 'phase');
+    const phase = frames.find((f) => eventOf(f)?.type === 'phase');
     expect(phase).toBeTruthy();
-    expect(JSON.parse(phase!.data)).toMatchObject({ stage: 'recon' });
+    expect(eventOf(phase!)).toMatchObject({ type: 'phase' });
+    expect(typeof eventOf(phase!)!.ts).toBe('string');
+    expect(eventOf(phase!)!.data).toMatchObject({ stage: 'recon' });
     expect(Date.now() - started).toBeLessThan(10_000); // sub-second-ish, CI-tolerant
 
     // Bad token → 401.
@@ -316,7 +318,7 @@ describe('Telemetry (D-a) — live path: ingest → Redpanda → SSE bridge → 
     expect(badData.statusCode).toBe(422);
 
     // None of the rejected events reached the stream.
-    const rejected = frames.filter((f) => f.event === 'nonsense');
+    const rejected = frames.filter((f) => eventOf(f)?.type === 'nonsense');
     expect(rejected.length).toBe(0);
   });
 
@@ -353,7 +355,7 @@ describe('Telemetry (D-a) — live path: ingest → Redpanda → SSE bridge → 
       headers: { authorization: `Bearer ${accessToken}` },
       until: () => ++phases >= 2,
     });
-    const freshPhases = fresh.filter((f) => f.event === 'phase');
+    const freshPhases = fresh.filter((f) => eventOf(f)?.type === 'phase');
     expect(freshPhases.length).toBeGreaterThanOrEqual(2);
 
     // Reconnect with Last-Event-ID = the first frame's id → only missed frames.
@@ -361,9 +363,9 @@ describe('Telemetry (D-a) — live path: ingest → Redpanda → SSE bridge → 
     const reconnect = await sseCollect(base, {
       headers: { authorization: `Bearer ${accessToken}`, 'last-event-id': lastId },
       // Stop once the first frame AFTER the cursor arrives (that's the missed one).
-      until: (f) => f.event === 'phase' && f.id !== lastId,
+      until: (f) => eventOf(f)?.type === 'phase' && f.id !== lastId,
     });
-    const reconnectPhases = reconnect.filter((f) => f.event === 'phase');
+    const reconnectPhases = reconnect.filter((f) => eventOf(f)?.type === 'phase');
     expect(reconnectPhases.length).toBeLessThan(freshPhases.length);
     expect(reconnectPhases.every((f) => f.id !== lastId)).toBe(true);
   });
@@ -385,4 +387,13 @@ function parseSse(block: string): SseFrame | null {
   }
   if (!frame.id && !frame.event && !frame.data) return null;
   return frame;
+}
+
+// Frames arrive as unnamed message events whose data is the full event envelope.
+function eventOf(f: SseFrame): { type: string; ts: string; data: unknown } | null {
+  try {
+    return JSON.parse(f.data) as { type: string; ts: string; data: unknown };
+  } catch {
+    return null;
+  }
 }

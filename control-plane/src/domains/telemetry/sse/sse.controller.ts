@@ -93,7 +93,18 @@ export class SseController {
           raw.write(': ping\n\n');
           continue;
         }
-        raw.write(`id: ${frame.id}\nevent: ${frame.event}\ndata: ${frame.data}\n\n`);
+        // Unnamed "message" event carrying the full event envelope. The browser
+        // dispatches frames WITH an `event:` field only to addEventListener(type)
+        // listeners — es.onmessage never fires for them — and the client folds
+        // {type, ts, data} envelopes (the shape the harness emits and the mock
+        // replays). So: no `event:` line, and the payload wraps the inner data.
+        raw.write(
+          `id: ${frame.id}\ndata: ${JSON.stringify({
+            type: frame.event,
+            ts: frame.ts,
+            data: JSON.parse(frame.data),
+          })}\n\n`,
+        );
       }
     } finally {
       raw.removeListener('close', onClose);

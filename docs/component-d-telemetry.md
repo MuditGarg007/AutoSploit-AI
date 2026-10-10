@@ -98,7 +98,7 @@ New `kafka/` dir in the telemetry slice:
 - Fresh subscribe or stale cursor: `XRANGE events:{id} - +` (bounded by maxlen) → replay recent backlog.
 - With `Last-Event-ID`: `XRANGE events:{id} (<cursor> +` (exclusive) → replay missed.
 - Then `XREAD BLOCK 5000 STREAMS events:{id} $` loop; short block doubles as the abort tick — loop checks an `AbortSignal` and emits a keep-alive `: ping` comment when idle. Cleans up on abort.
-- Frame: `{id: <redisId>, event: <type>, data: <data json>}`.
+- Frame: unnamed `message` event — `id: <redisId>`, `data: {"type": <type>, "ts": <ts>, "data": <inner data json>}` (the envelope the browser client folds via `es.onmessage`; a named `event:` line would never reach `onmessage`).
 
 **`sse/sse.controller.ts`** (implement): `@UseGuards(SessionGuard)` + `LifecycleService.assertOwned(:id, userId)` (imported from LifecycleModule — a read of C's rows for authorization, allowed; keeps D's "never writes state" intact). Uses `@Res()` + Fastify `reply.hijack()`, writes `text/event-stream` / `no-cache` headers to `reply.raw`, streams frames, honors the `Last-Event-ID` header, ends on request `close`. Raw route per the §9.1 note (not a tRPC subscription; avoids `@Sse()` adapter quirks on fastify 4.28.1).
 
