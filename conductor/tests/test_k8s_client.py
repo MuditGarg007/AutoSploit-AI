@@ -76,8 +76,10 @@ class FakeCoreV1:
         self.calls.append(("read_namespaced_pod", {"name": name, "namespace": namespace}))
         return self.pods[name]
 
-    def read_namespaced_pod_log(self, name, namespace):
-        self.calls.append(("read_namespaced_pod_log", {"name": name, "namespace": namespace}))
+    def read_namespaced_pod_log(self, name, namespace, **kwargs):
+        self.calls.append(
+            ("read_namespaced_pod_log", {"name": name, "namespace": namespace, **kwargs})
+        )
         return self.logs.get(name, "")
 
 
@@ -263,6 +265,43 @@ def test_pod_logs_returns_text():
     api = FakeCoreV1()
     api.logs["attacker"] = "turn 1: recon\nturn 2: exploit\n"
     assert "exploit" in EngagementCluster(api, ID).pod_logs("attacker")
+
+
+def test_stream_pod_logs_follows_with_str_fake():
+    # A fake returns the whole log as a str; stream_pod_logs splits it into lines
+    # and passes the follow kwargs through to the API (the live-relay contract).
+    api = FakeCoreV1()
+    api.logs["attacker"] = '{"type":"phase"}\n{"type":"finding"}\n'
+    lines = list(EngagementCluster(api, ID).stream_pod_logs("attacker"))
+    assert lines == ['{"type":"phase"}', '{"type":"finding"}']
+    _name, kwargs = api.calls[-1]
+    assert kwargs["follow"] is True and kwargs["_preload_content"] is False
+
+
+def test_stream_pod_logs_yields_lines_from_streaming_response():
+    # The real client returns a streaming response (`.stream()` of byte chunks)
+    # when _preload_content=False; stream_pod_logs reassembles lines across chunk
+    # boundaries and releases the connection when the stream ends.
+    class FakeResp:
+        def __init__(self, chunks):
+            self._chunks = chunks
+            self.released = False
+
+        def stream(self):
+            yield from self._chunks
+
+        def release_conn(self):
+            self.released = True
+
+    resp = FakeResp([b'{"type":"ph', b'ase"}\n{"type":"finding', b'"}\n'])
+
+    class StreamingApi(FakeCoreV1):
+        def read_namespaced_pod_log(self, name, namespace, **kwargs):
+            return resp
+
+    lines = list(EngagementCluster(StreamingApi(), ID).stream_pod_logs("attacker"))
+    assert lines == ['{"type":"phase"}', '{"type":"finding"}']
+    assert resp.released is True
 
 
 def test_container_exit_code_from_dict():

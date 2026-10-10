@@ -24,7 +24,7 @@ constructed one layer up, isolated in a factory.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any, Protocol
 
 from autosploit_conductor.k8s import manifests as m
@@ -64,7 +64,14 @@ class CoreV1(Protocol):
     def create_namespaced_pod(self, namespace: str, body: Any) -> Any: ...
     def create_namespaced_service(self, namespace: str, body: Any) -> Any: ...
     def read_namespaced_pod(self, name: str, namespace: str) -> Any: ...
-    def read_namespaced_pod_log(self, name: str, namespace: str) -> Any: ...
+    # `follow`/`_preload_content` are the real client's kwargs: with
+    # `follow=True, _preload_content=False` the call returns a streaming
+    # urllib3 response (`.stream()`) instead of the whole log as a str — used by
+    # `stream_pod_logs` to relay events live. Kept as `**kwargs` so a one-shot
+    # read (no kwargs) and the fakes stay valid against the same Protocol.
+    def read_namespaced_pod_log(
+        self, name: str, namespace: str, **kwargs: Any
+    ) -> Any: ...
 
 
 class CustomObjects(Protocol):
@@ -257,6 +264,51 @@ class EngagementCluster:
         """The Pod's logs — the harness event stream (Phase A's streamed stdout)."""
         logs = self._api.read_namespaced_pod_log(name=name, namespace=self.namespace)
         return logs if isinstance(logs, str) else str(logs)
+
+    def stream_pod_logs(self, name: str) -> Iterator[str]:
+        """Follow the Pod's log, yielding each line as it is written.
+
+        The Phase-B twin of Phase A's streamed subprocess stdout (`launch.py`):
+        the harness writes its JSONL event feed to the attacker Pod's stdout, and
+        the orchestrator re-emits each line to the conductor's own stdout so the
+        control-plane worker relays it to the ingest endpoint live. Without this
+        nothing carries the event stream out of the Pod until it exits, so the
+        dashboard stays empty for the whole run.
+
+        With the real client `read_namespaced_pod_log(follow=True,
+        _preload_content=False)` returns a streaming urllib3 response whose
+        `.stream()` yields byte chunks (split into lines here); a fake returns the
+        log as a plain str, which is split and yielded line by line. The caller
+        runs this on a daemon thread and treats any error as end-of-stream — the
+        feed is best effort and never changes the run's lifecycle outcome.
+        """
+        resp = self._api.read_namespaced_pod_log(
+            name=name,
+            namespace=self.namespace,
+            follow=True,
+            _preload_content=False,
+        )
+        stream = getattr(resp, "stream", None)
+        if callable(stream):
+            buffer = ""
+            try:
+                for chunk in stream():
+                    if isinstance(chunk, bytes):
+                        chunk = chunk.decode("utf-8", "replace")
+                    buffer += chunk
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        yield line
+            finally:
+                if buffer:
+                    yield buffer
+                release = getattr(resp, "release_conn", None)
+                if callable(release):
+                    release()
+        else:
+            text = resp if isinstance(resp, str) else str(resp)
+            for line in text.splitlines():
+                yield line
 
     def container_exit_code(self, name: str) -> int | None:
         """The Pod's first container's terminated exit code, or None if not terminated.

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -36,7 +37,11 @@ from typing import Any, Protocol
 from autosploit_conductor.context import EngagementContext, make_context
 from autosploit_conductor.k8s import helm as _helm
 from autosploit_conductor.k8s.client import CoreV1, CustomObjects, EngagementCluster
-from autosploit_conductor.k8s.watch import map_pod_result, watch_pod
+from autosploit_conductor.k8s.watch import (
+    map_pod_result,
+    wait_pod_running,
+    watch_pod,
+)
 from autosploit_conductor.launch import _redact
 from autosploit_conductor.record import ProvisionOutcome, write_record
 from autosploit_conductor.result import RunResult
@@ -207,6 +212,30 @@ def _run_engagement(
         _chart_values(cluster.engagement_id, prov, attacker_image),
     )
 
+    # Relay the attacker's stdout (the harness JSONL event feed) to our own stdout
+    # live, once the Pod is up, so the control-plane worker POSTs each event to the
+    # ingest endpoint as it happens — Phase-A parity (launch.py streams the harness
+    # subprocess stdout the same way). Without this nothing carries the event stream
+    # out of the Pod until it exits, so the live dashboard stays empty the whole run.
+    # Best effort: the phase poll below still decides the lifecycle, and
+    # `_collect_logs` keeps the full file artifact regardless.
+    streamer: threading.Thread | None = None
+    if wait_pod_running(
+        cluster,
+        _ATTACKER_POD,
+        timeout_s=timeout_s,
+        poll_interval_s=poll_interval_s,
+        now=now,
+        sleep=sleep,
+    ):
+        streamer = threading.Thread(
+            target=_relay_logs,
+            args=(cluster, _ATTACKER_POD, api_key),
+            name="attacker-log-stream",
+            daemon=True,
+        )
+        streamer.start()
+
     outcome = watch_pod(
         cluster,
         _ATTACKER_POD,
@@ -217,10 +246,30 @@ def _run_engagement(
     )
     result = map_pod_result(outcome)
 
+    # The Pod reached a terminal phase (or timed out): the follow stream has closed
+    # or is about to. Give the relay thread a moment to drain the final lines before
+    # teardown deletes the namespace; it is a daemon, so a hung stream never blocks.
+    if streamer is not None:
+        streamer.join(timeout=5.0)
+
     # Collect the harness event stream BEFORE teardown deletes the namespace. Best
     # effort — a log-read failure never changes the run's lifecycle outcome.
     _collect_logs(cluster, ctx, api_key)
     return result
+
+
+def _relay_logs(cluster: EngagementCluster, pod: str, api_key: str) -> None:
+    """Re-emit the attacker Pod's log lines to our stdout, key-scrubbed (§8).
+
+    Runs on a daemon thread for the duration of the attack phase. Each line is the
+    worker's ingest feed, so scrubbing matches the one-shot `_collect_logs` path.
+    Any stream error just ends the feed — it is diagnostics, never the result.
+    """
+    try:
+        for line in cluster.stream_pod_logs(pod):
+            print(_redact(line, api_key), flush=True)
+    except Exception as exc:  # noqa: BLE001 — the live feed is best effort, never the run outcome
+        print(f"conductor: attacker log stream ended: {exc}", file=sys.stderr, flush=True)
 
 
 def _collect_logs(cluster: EngagementCluster, ctx: EngagementContext, api_key: str) -> None:

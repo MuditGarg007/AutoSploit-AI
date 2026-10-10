@@ -58,7 +58,7 @@ class FakeCoreV1:
             }
         }
 
-    def read_namespaced_pod_log(self, name, namespace):
+    def read_namespaced_pod_log(self, name, namespace, **kwargs):
         return self._logs
 
 
@@ -200,6 +200,25 @@ def test_attacker_logs_saved_and_key_redacted(tmp_path):
     log = (tmp_path / "e3" / "attacker.log").read_text()
     assert KEY not in log
     assert "***REDACTED***" in log
+
+
+def test_attacker_events_streamed_to_stdout_live(tmp_path, capsys):
+    # A Running Pod's stdout (the harness JSONL event feed) is re-emitted to the
+    # conductor's own stdout line by line — the seam the control-plane worker reads
+    # and relays to the ingest endpoint. Without this the live dashboard is empty.
+    # The key is scrubbed from the live feed exactly as in the saved log.
+    events = '{"type":"phase","data":{}}\n{"type":"finding","data":{}}\nkey=' + KEY + "\n"
+    api = FakeCoreV1(phase="Running", logs=events)
+    helm = FakeHelm()
+    run_k8s(
+        REPO, api, provision=_provision(), engagement_id="ev", out_dir=tmp_path,
+        api_key=KEY, helm=helm, timeout_s=0.0, now=lambda: 0.0, sleep=_no_sleep,
+    )
+    out = capsys.readouterr().out
+    assert '{"type":"phase","data":{}}' in out
+    assert '{"type":"finding","data":{}}' in out
+    assert KEY not in out
+    assert "***REDACTED***" in out
 
 
 def test_failed_provision_skips_install_but_tears_down(tmp_path):
