@@ -45,11 +45,19 @@ class Ports:
     host: tuple[int, ...]
 
 
-def discover(container: Container, timeout_s: float = 30.0, backoff: float = 0.25) -> Ports:
+def discover(
+    container: Container,
+    timeout_s: float = 30.0,
+    backoff: float = 0.25,
+    grace_s: float = 1.0,
+) -> Ports:
     """Poll `container` to ready, then return its published host `Ports`.
 
-    Raises `NoPortsExposed` if a ready container published nothing, or `BootTimeout`
-    (with a log tail, §8) if it exits or never becomes ready within `timeout_s`.
+    Raises `NoPortsExposed` if a container that stays stably up published nothing, or
+    `BootTimeout` (with a log tail, §8) if it exits or never becomes ready within
+    `timeout_s`. A container that only momentarily reaches `running` (about to exit)
+    gets a `grace_s` confirmation poll before `NoPortsExposed`, so it falls through to
+    `BootTimeout` instead of being mis-rejected as port-less.
     """
     deadline = time.monotonic() + timeout_s
     sleep = backoff
@@ -61,17 +69,47 @@ def discover(container: Container, timeout_s: float = 30.0, backoff: float = 0.2
 
         if _is_ready(state):
             host_ports = _host_ports(container.attrs)
-            if not host_ports:
-                raise NoPortsExposed(
-                    "target exposes nothing to attack: container published no ports"
-                )
-            return Ports(host=host_ports)
+            if host_ports:
+                return Ports(host=host_ports)
+            # Ready but nothing published. A `-P` run binds every EXPOSEd port at
+            # start, so ports will not appear later — but a container caught `running`
+            # only momentarily (racing its own exit) would be wrongly rejected here.
+            # Confirm it stays up before NoPortsExposed; if it hits a terminal state
+            # in the grace window it was never stably up → BootTimeout.
+            return _confirm_exposeless(container, grace_s, deadline, backoff)
 
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise _boot_timeout(container, f"container not ready within {timeout_s}s")
         time.sleep(min(sleep, remaining))
         sleep = min(sleep * 2, _MAX_BACKOFF)
+
+
+def _confirm_exposeless(
+    container: Container, grace_s: float, deadline: float, backoff: float
+) -> Ports:
+    """Confirm a port-less `running` container is stably up, else raise.
+
+    Polls over a `grace_s` window (bounded by the overall `deadline`). If the container
+    reaches a terminal state within it, it only ran momentarily → `BootTimeout` with the
+    log tail (§8). If it survives the window still port-less, the image truly exposes
+    nothing → `NoPortsExposed` (§8). Never returns `Ports` — the name mirrors `discover`'s
+    signature for the caller; a port-less confirm always rejects.
+    """
+    grace_deadline = min(time.monotonic() + grace_s, deadline)
+    sleep = backoff
+    while True:
+        remaining = grace_deadline - time.monotonic()
+        if remaining <= 0:
+            raise NoPortsExposed(
+                "target exposes nothing to attack: container published no ports"
+            )
+        time.sleep(min(sleep, remaining))
+        sleep = min(sleep * 2, _MAX_BACKOFF)
+        container.reload()
+        state = container.attrs.get("State", {})
+        if state.get("Status") in _TERMINAL_STATES:
+            raise _boot_timeout(container, f"container {state.get('Status')} before ready")
 
 
 def _is_ready(state: dict) -> bool:
