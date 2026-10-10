@@ -1,0 +1,109 @@
+# Vault for the control plane on the Contabo VPS kind cluster.
+#
+# Vault is a control-plane runtime dependency (SEAM-2 secret broker: the plane
+# uses the transit engine to wrap/unwrap sensitive material). The control-plane
+# Helm chart deliberately does NOT ship stateful deps — `values.yaml`
+# `external.vaultAddr` is an endpoint ops points at, and ops owns the dep
+# (chart §8.2, runbook §5.3). This mirrors the Redis/Postgres conversions in
+# deps-redis.yaml / deps-postgres.yaml.
+#
+# It was previously stood up imperatively, so a node/pod wipe dropped it with no
+# manifest to restore from. This manifest makes the dep declarative and
+# reproducible. It is byte-faithful to the live Deployment/Service (same name,
+# labels, selector, template incl. the readiness probe and IPC_LOCK cap) so
+# `kubectl apply` ADOPTS the running object with no pod recreate — applying it
+# over a healthy Vault is a no-op.
+#
+# DEV MODE / EPHEMERAL (known gap): `server -dev` runs Vault in-memory and
+# auto-unsealed, so a pod restart loses all Vault state (transit keys, mounts).
+# This matches the prior imperative setup and the runbook's "minimal Vault for
+# the demo" posture (runbook §5.1). After any restart, the plane's Vault
+# bootstrap (transit engine + key + policy + k8s-auth role, see Terraform
+# `vault_*` resources / runbook §5.1) must be re-run. Promoting Vault to a
+# sealed, file/raft-backed, persistent deployment is a deliberate behavior
+# change, out of scope for this conversion.
+#
+# PREREQUISITE SECRET (not shipped here — holds a credential): the dev root
+# token is read from Secret `vault-dev` key `VAULT_DEV_ROOT_TOKEN_ID`. It already
+# exists in the cluster; this manifest only references it. If recreating from
+# scratch, create it first with a fresh token (never commit the value):
+#
+#   kubectl -n autosploit-system create secret generic vault-dev \
+#     --from-literal=VAULT_DEV_ROOT_TOKEN_ID="$(openssl rand -hex 16)"
+#
+# The Service name `vault` + port 8200 are what `external.vaultAddr=
+# http://vault:8200` resolves to. NOT part of the Helm release, so
+# `helm upgrade` never touches it. Re-apply by hand if the cluster is recreated:
+#
+#   kubectl apply -f deploy/vps/deps-vault.yaml
+#
+# Verify:
+#   kubectl -n autosploit-system rollout status deploy/vault
+#   kubectl -n autosploit-system exec deploy/vault -- vault status   # -> Sealed: false (dev)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault
+  namespace: autosploit-system
+  labels:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: dev-vault
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vault
+        app.kubernetes.io/component: dev-vault
+    spec:
+      containers:
+        - name: vault
+          image: hashicorp/vault:1.17
+          imagePullPolicy: IfNotPresent
+          args: ["server", "-dev"]
+          env:
+            - name: VAULT_DEV_ROOT_TOKEN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: vault-dev
+                  key: VAULT_DEV_ROOT_TOKEN_ID
+            - name: VAULT_DEV_LISTEN_ADDRESS
+              value: "0.0.0.0:8200"
+            - name: VAULT_ADDR
+              value: "http://127.0.0.1:8200"
+          ports:
+            - name: http
+              containerPort: 8200
+          # Vault locks memory to keep secrets out of swap; needs IPC_LOCK.
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "250m", memory: "256Mi" }
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true
+              port: 8200
+            initialDelaySeconds: 3
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: autosploit-system
+  labels:
+    app.kubernetes.io/name: vault
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: vault
+  ports:
+    - name: http
+      port: 8200
+      targetPort: 8200

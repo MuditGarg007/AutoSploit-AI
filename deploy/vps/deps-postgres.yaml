@@ -1,0 +1,97 @@
+# Postgres for the control plane on the Contabo VPS kind cluster.
+#
+# Postgres is a control-plane runtime dependency (the plane's relational store:
+# engagements, lifecycle state, findings projections). The control-plane Helm
+# chart deliberately does NOT ship stateful deps — `values.yaml`
+# `external.postgresUrl` is an endpoint ops points at, and ops owns the dep
+# (chart §8.2, runbook §5.3). This mirrors the Redis conversion in
+# deps-redis.yaml.
+#
+# It was previously stood up imperatively, so a node/pod wipe dropped it with no
+# manifest to restore from. This manifest makes the dep declarative and
+# reproducible so a wipe is a one-command recovery. It is byte-faithful to the
+# live Deployment/Service (same name, labels, selector, template, strategy) so
+# `kubectl apply` ADOPTS the running object with no pod recreate and no data
+# churn — applying it over a healthy Postgres is a no-op.
+#
+# EPHEMERAL (known gap): there is no PVC — Postgres data lives in the pod's
+# writable layer, so a pod restart loses it, exactly as the prior imperative
+# setup did. The plane re-runs its migrations on boot; findings are also durable
+# in Cloudflare R2 (runbook §3.2). If a durable relational store becomes a
+# requirement, add a PVC + volumeMount at /var/lib/postgresql/data and flip the
+# strategy to Recreate (a PVC cannot be shared by two pods during a rolling
+# swap). That is a deliberate behavior change, out of scope for this conversion.
+#
+# POSTGRES_HOST_AUTH_METHOD=trust matches the live dev setup: the DB is only
+# reachable in-cluster on the ClusterIP Service (no NodePort/ingress), and the
+# plane connects over that private edge. Do not expose this Service externally.
+#
+# The Service name `postgres` + port 5432 are what
+# `external.postgresUrl=postgres://postgres:5432/control_plane` resolves to. NOT
+# part of the Helm release, so `helm upgrade` never touches it. Re-apply by hand
+# if the cluster is recreated:
+#
+#   kubectl apply -f deploy/vps/deps-postgres.yaml
+#
+# Verify:
+#   kubectl -n autosploit-system rollout status deploy/postgres
+#   kubectl -n autosploit-system exec deploy/postgres -- pg_isready -U postgres   # -> accepting connections
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: autosploit-system
+  labels:
+    app: postgres
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_DB
+              value: control_plane
+            # In-cluster-only dev auth (see header). The Service is ClusterIP,
+            # never externally reachable.
+            - name: POSTGRES_HOST_AUTH_METHOD
+              value: trust
+          # Unnamed port: the live container port has no name, and naming it
+          # would change the pod template → a rolling swap → ephemeral DB loss.
+          ports:
+            - containerPort: 5432
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { memory: "512Mi" }
+          # No readinessProbe: the live Deployment has none, and adding one would
+          # change the pod template → a rolling swap on apply → the ephemeral DB
+          # would be lost. Faithful adoption (a true no-op) is worth more than a
+          # probe here; use the `pg_isready` verify command above instead. Add a
+          # probe only together with the PVC change described in the header.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: autosploit-system
+  labels:
+    app: postgres
+    app.kubernetes.io/name: postgres
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

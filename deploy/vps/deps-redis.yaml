@@ -1,0 +1,91 @@
+# Redis for the control plane on the Contabo VPS kind cluster.
+#
+# Redis is a control-plane runtime dependency (BullMQ engagement queue, the
+# telemetry last-mile, and the quota meter). The control-plane Helm chart
+# deliberately does NOT ship stateful deps — `values.yaml` `external.redisUrl`
+# is an endpoint ops points at, and ops owns the dep (chart §8.2, runbook §5.3).
+#
+# It was previously stood up imperatively (`kubectl create deployment redis
+# --image=redis:7-alpine ...`), so a node/pod wipe dropped it and left no
+# manifest to restore from. When Redis vanishes, engagements hang at "starting"
+# and the quota-meter log is the tell (handoff #1). This manifest makes the dep
+# declarative and reproducible so a wipe is a one-command recovery.
+#
+# Non-persistent by design: Redis here is a cache + ephemeral job queue, not a
+# system of record (findings are durable in Postgres/R2). A restart loses
+# in-flight queue state, which matches the prior imperative setup. Add a PVC
+# only if durable queue state becomes a requirement.
+#
+# The Service name `redis` + port 6379 are exactly what `external.redisUrl=
+# redis://redis:6379` resolves to. NOT part of the Helm release, so
+# `helm upgrade` never touches it. Re-apply by hand if the cluster is recreated:
+#
+#   kubectl apply -f deploy/vps/deps-redis.yaml
+#
+# Verify:
+#   kubectl -n autosploit-system rollout status deploy/redis
+#   kubectl -n autosploit-system exec deploy/redis -- redis-cli ping   # -> PONG
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: autosploit-system
+  labels:
+    app: redis
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: cache
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: a single-replica cache has no benefit from
+  # overlapping pods, and two Redis pods briefly sharing the Service would split
+  # reads/writes across them.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/component: cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["redis-server", "--save", "", "--appendonly", "no"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          resources:
+            requests: { cpu: "25m", memory: "64Mi" }
+            limits: { cpu: "250m", memory: "256Mi" }
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: autosploit-system
+  labels:
+    app: redis
+    app.kubernetes.io/name: redis
+spec:
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
