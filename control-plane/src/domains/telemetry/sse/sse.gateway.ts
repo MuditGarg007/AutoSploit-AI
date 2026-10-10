@@ -5,6 +5,7 @@ import { REDIS } from '../../../redis/redis.module.js';
 export interface SseFrame {
   id: string; // Redis Stream auto-id (ms-seq) — the Last-Event-ID cursor
   event: string;
+  ts: string;
   data: string;
 }
 
@@ -67,7 +68,7 @@ export class SseGateway {
       if (signal.aborted) break;
       if (!res) {
         // Idle tick → keep-alive ping.
-        yield { id: '', event: '', data: '' }; // caller emits ": ping"
+        yield { id: '', event: '', ts: '', data: '' }; // caller emits ": ping"
         continue;
       }
       for (const [, entries] of res) {
@@ -87,6 +88,7 @@ export class SseGateway {
     return {
       id,
       event: map.get('type') ?? '',
+      ts: map.get('ts') ?? '',
       data: map.get('data') ?? '{}',
     };
   }
