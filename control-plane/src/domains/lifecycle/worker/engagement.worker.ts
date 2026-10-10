@@ -122,6 +122,23 @@ export class EngagementWorker {
     // for it so the first flip here (dispatched → attacking) is always legal.
     await this.waitForState(engagementId, 'dispatched');
 
+    // Stalled-job guard. BullMQ re-delivers a job whose lock expired (a worker
+    // pod restart mid-run — a rev bump, OOM, reschedule). `attempts: 1` does NOT
+    // cover a stall, so a long-running engagement can be re-processed here after
+    // its first run already advanced the row past `dispatched`. Re-walking the
+    // cosmetic chain would then flip from attacking/terminal and spam
+    // `Illegal state transition` warnings, and — worse — re-spawn the conductor
+    // for an engagement whose namespace was already torn down. Any state other
+    // than `dispatched` at this point means this delivery is not the first, so
+    // ack the job (return — no throw) and leave the authoritative row untouched.
+    const startState = await this.currentState(engagementId);
+    if (startState !== 'dispatched') {
+      this.logger.warn(
+        `engagement ${engagementId}: skipping redelivered job (state is ${startState ?? 'gone'}, expected dispatched)`,
+      );
+      return;
+    }
+
     this.logger.log(`engagement ${engagementId}: spawning conductor for ${repoRef}`);
 
     // Terminal state is derived from the conductor exit code + record, so the
@@ -304,6 +321,19 @@ export class EngagementWorker {
       await new Promise((r) => setTimeout(r, 25));
     }
     throw new Error(`engagement ${engagementId} never reached ${expected}`);
+  }
+
+  // Current state, or null if the row is gone (deleted/pruned). Never throws —
+  // the stalled-job guard treats "gone" the same as "already past dispatched":
+  // not a first delivery, nothing to run.
+  private async currentState(
+    engagementId: string,
+  ): Promise<EngagementState | null> {
+    try {
+      return await this.lifecycle.getState(engagementId);
+    } catch {
+      return null;
+    }
   }
 
   // Transition that swallows NotFound/Conflict — the worker must never crash a
