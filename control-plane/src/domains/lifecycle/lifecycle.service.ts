@@ -7,7 +7,7 @@ import {
   Optional,
   UnauthorizedException,
 } from '@nestjs/common';
-import { and, desc, eq, notInArray } from 'drizzle-orm';
+import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
 import { trace } from '@opentelemetry/api';
 import { DRIZZLE, type Db } from '../../db/drizzle.module.js';
@@ -19,6 +19,10 @@ import type { EngagementJobData } from './queue/engagement-queue.js';
 import { IngestTokenService } from './ingest-token.service.js';
 import { EngagementStateMachine } from './state-machine/state-machine.js';
 import { engagements } from './lifecycle.schema.js';
+// Slice D's projections (findings count + spend) are joined into the list view so
+// the overview tiles/rows show real numbers. C stays a read-only consumer of these
+// tables — D's projector remains their sole writer (§5 rule 3); this only SELECTs.
+import { findings, cost } from '../telemetry/telemetry.schema.js';
 import type { Metrics } from '../../core/observability/metrics.js';
 
 export type EngagementState =
@@ -34,6 +38,15 @@ export type EngagementState =
   | 'archived';
 
 export type Engagement = typeof engagements.$inferSelect;
+
+// A list row carries the slice-D rollup alongside the lifecycle columns: the
+// overview's Findings/Spend tiles and per-row numbers read these. `findings` is a
+// count; `usdMicros` is summed cost in micro-USD (divide by 1e6 for dollars),
+// matching the `cost` table's unit so no float rounding happens server-side.
+export type EngagementListRow = Engagement & {
+  findings: number;
+  usdMicros: number;
+};
 
 // States the lifecycle treats as terminal for concurrency counting: an
 // engagement in any of these is no longer consuming a user's "active" slot
@@ -204,9 +217,40 @@ export class LifecycleService {
     return row[0].state as EngagementState;
   }
 
-  async list(userId: string): Promise<Engagement[]> {
+  async list(userId: string): Promise<EngagementListRow[]> {
+    // Correlated scalar subqueries, not LEFT JOINs: an engagement has many
+    // findings AND many cost rows, so joining both would multiply (cartesian) and
+    // double-count the sum. The subqueries stay one-row-per-engagement and are
+    // cheap at per-user list scale. COALESCE on the sum so an engagement with no
+    // cost rows yet reports 0, not NULL.
+    // The correlated refs MUST be table-qualified: inside the subquery both
+    // `findings.engagement_id` and the outer `engagements.id` are spelled out, or
+    // Postgres resolves the bare `engagement_id`/`id` to the subquery's own table
+    // and the predicate becomes `findings.engagement_id = findings.id` — always
+    // false, so every rollup returns 0. (Interpolating `${findings.engagementId}`
+    // via drizzle's sql template renders it UNqualified, which is exactly that
+    // bug; interpolating the table object `${findings}` renders `"findings"`, so
+    // qualify by hand.)
     return this.db
-      .select()
+      .select({
+        id: engagements.id,
+        userId: engagements.userId,
+        repoFullName: engagements.repoFullName,
+        targetPort: engagements.targetPort,
+        state: engagements.state,
+        haltReason: engagements.haltReason,
+        failReason: engagements.failReason,
+        createdAt: engagements.createdAt,
+        updatedAt: engagements.updatedAt,
+        findings: sql<number>`(
+          select count(*) from ${findings}
+          where ${findings}.engagement_id = ${engagements}.id
+        )`.mapWith(Number),
+        usdMicros: sql<number>`coalesce((
+          select sum(${cost}.usd_micros) from ${cost}
+          where ${cost}.engagement_id = ${engagements}.id
+        ), 0)`.mapWith(Number),
+      })
       .from(engagements)
       .where(eq(engagements.userId, userId))
       .orderBy(desc(engagements.createdAt));

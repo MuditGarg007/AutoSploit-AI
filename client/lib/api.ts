@@ -67,9 +67,10 @@ export class ApiError extends Error {
 }
 
 // Wire shape of a lifecycle row (control-plane engagements table). Dates arrive
-// as ISO strings over JSON. findings/usd are NOT on this row: those are the
-// telemetry rollup (slice D), not served by the lifecycle endpoints, so the list
-// view shows 0 for them until a rollup endpoint exists.
+// as ISO strings over JSON. The list endpoint (GET /engagements) now joins the
+// slice-D telemetry rollup, so `findings` (count) and `usdMicros` (summed cost in
+// micro-USD) ride along; the single-engagement GET does not carry them, so both
+// are optional and default to 0 in toRow.
 interface ApiEngagement {
   id: string;
   userId: string;
@@ -79,6 +80,8 @@ interface ApiEngagement {
   failReason: string | null;
   createdAt: string;
   updatedAt: string;
+  findings?: number;
+  usdMicros?: number;
 }
 
 function toRow(e: ApiEngagement): EngagementRow {
@@ -86,8 +89,10 @@ function toRow(e: ApiEngagement): EngagementRow {
     id: e.id,
     repo: e.repoFullName,
     state: e.state,
-    findings: 0,
-    usd: 0,
+    findings: e.findings ?? 0,
+    // usdMicros is micro-USD (1e6 = $1) to match the server's cost table unit;
+    // convert to dollars for display.
+    usd: (e.usdMicros ?? 0) / 1e6,
     startedTs: e.createdAt,
   };
 }

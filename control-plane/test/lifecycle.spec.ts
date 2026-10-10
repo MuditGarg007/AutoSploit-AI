@@ -299,6 +299,46 @@ describe('Lifecycle (C) — engagement system-of-record', () => {
     expect(list.every((e: any) => e.userId)).toBe(true);
   });
 
+  it('list joins the slice-D rollup (findings count + summed spend)', async () => {
+    // Regression guard: the overview tiles/rows read findings + usd from the list
+    // endpoint. These live in D's `findings`/`cost` projection tables, not the
+    // engagements table, so the list must JOIN them. Before the rollup, toRow on
+    // the client hardcoded 0 and completed runs showed 0 findings / $0 forever.
+    const accessToken = await login();
+    const { engagementId } = await createEngagement(accessToken, 'complete');
+    await waitFor(async () => (await stateOf(engagementId!)) === 'completed');
+
+    // Seed two findings and two cost rows directly into D's projections (the
+    // projector is their sole writer at runtime; here we stand in for it).
+    const pool = await newPool();
+    try {
+      await pool.query(
+        `insert into findings (engagement_id, source_id, severity, title)
+         values ($1,'F-001','high','RCE'), ($1,'F-002','low','Info leak')`,
+        [engagementId],
+      );
+      await pool.query(
+        `insert into cost (engagement_id, tokens, usd_micros)
+         values ($1, 1000, 1180000), ($1, 500, 2000000)`,
+        [engagementId],
+      );
+    } finally {
+      await pool.end();
+    }
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/engagements',
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const row = res.json().find((e: any) => e.id === engagementId);
+    expect(row).toBeDefined();
+    expect(row.findings).toBe(2);
+    // 1_180_000 + 2_000_000 micro-USD = $3.18 once the client divides by 1e6.
+    expect(row.usdMicros).toBe(3180000);
+  });
+
   it('abort of another user’s engagement 404s (ownership)', async () => {
     const accessToken = await login();
     const { engagementId } = await createEngagement(accessToken, 'complete');
