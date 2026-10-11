@@ -138,9 +138,15 @@ describe('Reports (E) — assembled report + presigned artifacts for the owner',
       url: `/auth/callback?code=fake-code&state=${state}`,
       headers: { cookie: `gh_oauth_state=${state}` },
     });
-    return decodeURIComponent(
-      (cb.headers.location as string).split('access_token=')[1],
-    );
+    const refreshCookie = cookiesOf(cb.headers as Record<string, unknown>).match(
+      /refresh_token=([^;]+)/,
+    )?.[1] as string;
+    const refresh = await app.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      headers: { cookie: `refresh_token=${refreshCookie}` },
+    });
+    return (refresh.json() as { accessToken: string }).accessToken;
   }
 
   function userIdOf(accessToken: string): string {
