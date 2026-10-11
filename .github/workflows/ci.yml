@@ -68,7 +68,13 @@ jobs:
 
       - name: Build, load, and upgrade on the VPS
         run: |
-          ssh -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
+          # Keepalive is required: the on-box fat-image build has long silent steps
+          # (e.g. `chmod -R a+rX /app` over a ~2.3 GB tree runs minutes with no stdout).
+          # Without probes the idle SSH connection is dropped ("Broken pipe", exit 255),
+          # which cancels the docker build client. ServerAlive probes keep it up.
+          ssh -i ~/.ssh/deploy_key \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=1000 -o TCPKeepAlive=yes \
+            "${VPS_USER}@${VPS_HOST}" \
             CLUSTER="$CLUSTER" NAMESPACE="$NAMESPACE" 'bash -seuo pipefail' <<'REMOTE'
           cd /root/AutoSploit-AI
 
