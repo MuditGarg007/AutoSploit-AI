@@ -103,7 +103,32 @@ describe('Identity (A) — OAuth round-trip against real Postgres + Vault', () =
     vi.unstubAllGlobals();
   });
 
-  it('completes the OAuth round-trip: callback → refresh cookie + access JWT', async () => {
+  // Run the full OAuth round-trip and return the refresh cookie the callback set
+  // plus a freshly-minted access token (obtained the way the SPA does: POST
+  // /auth/refresh with the cookie — the callback no longer puts a token on the URL).
+  async function login(): Promise<{ refreshCookie: string; accessToken: string }> {
+    const start = await app.inject({ method: 'GET', url: '/auth/github' });
+    const state = cookiesOf(start.headers as Record<string, unknown>).match(
+      /gh_oauth_state=([^;]+)/,
+    )?.[1];
+    const cb = await app.inject({
+      method: 'GET',
+      url: `/auth/callback?code=fake-code&state=${state}`,
+      headers: { cookie: `gh_oauth_state=${state}` },
+    });
+    const refreshCookie = cookiesOf(cb.headers as Record<string, unknown>).match(
+      /refresh_token=([^;]+)/,
+    )?.[1] as string;
+    const refresh = await app.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      headers: { cookie: `refresh_token=${refreshCookie}` },
+    });
+    const accessToken = (refresh.json() as { accessToken: string }).accessToken;
+    return { refreshCookie, accessToken };
+  }
+
+  it('completes the OAuth round-trip: refresh cookie set, NO token on the URL', async () => {
     // Start like a real client: hit /auth/github first to get the state cookie.
     const start = await app.inject({ method: 'GET', url: '/auth/github' });
     expect(start.statusCode).toBe(302);
@@ -121,7 +146,10 @@ describe('Identity (A) — OAuth round-trip against real Postgres + Vault', () =
     });
 
     expect(cb.statusCode).toBe(302);
-    expect(cb.headers.location).toContain('access_token=');
+    // The access token must NOT ride the URL any more (no leak into history /
+    // Referer / edge logs); the redirect is a bare /dashboard.
+    expect(cb.headers.location).toBe('http://localhost:3000/dashboard');
+    expect(cb.headers.location).not.toContain('access_token=');
     const cbCookies = cookiesOf(cb.headers as Record<string, unknown>);
     expect(cbCookies).toContain('refresh_token=');
     expect(cbCookies).toContain('HttpOnly');
@@ -129,18 +157,7 @@ describe('Identity (A) — OAuth round-trip against real Postgres + Vault', () =
   });
 
   it('GET /me returns the user identity from the valid session', async () => {
-    const start = await app.inject({ method: 'GET', url: '/auth/github' });
-    const state = cookiesOf(start.headers as Record<string, unknown>).match(
-      /gh_oauth_state=([^;]+)/,
-    )?.[1];
-    const cb = await app.inject({
-      method: 'GET',
-      url: `/auth/callback?code=fake-code&state=${state}`,
-      headers: { cookie: `gh_oauth_state=${state}` },
-    });
-    const accessToken = decodeURIComponent(
-      (cb.headers.location as string).split('access_token=')[1],
-    );
+    const { accessToken } = await login();
 
     const me = await app.inject({
       method: 'GET',
@@ -153,6 +170,48 @@ describe('Identity (A) — OAuth round-trip against real Postgres + Vault', () =
       githubId: '12345',
       login: 'alice',
     });
+  });
+
+  it('refresh is non-rotating: the SAME cookie refreshes repeatedly without revoking', async () => {
+    const { refreshCookie } = await login();
+
+    // Three sequential refreshes with the unchanged cookie — the old flow would
+    // have revoked the session on the 2nd (replayed "prev" token). Each must now
+    // return 200 + a usable access token, and the cookie value must not change.
+    for (let i = 0; i < 3; i++) {
+      const r = await app.inject({
+        method: 'POST',
+        url: '/auth/refresh',
+        headers: { cookie: `refresh_token=${refreshCookie}` },
+      });
+      expect(r.statusCode).toBe(201); // Nest POST default
+      const token = (r.json() as { accessToken?: string }).accessToken;
+      expect(token).toBeTruthy();
+      const reCookie = cookiesOf(r.headers as Record<string, unknown>).match(
+        /refresh_token=([^;]+)/,
+      )?.[1];
+      expect(reCookie).toBe(refreshCookie);
+
+      // The minted token authenticates.
+      const me = await app.inject({
+        method: 'GET',
+        url: '/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(me.statusCode).toBe(200);
+    }
+  });
+
+  it('refresh fails closed on a missing or unknown cookie (401)', async () => {
+    const none = await app.inject({ method: 'POST', url: '/auth/refresh' });
+    expect(none.statusCode).toBe(401);
+
+    const bogus = await app.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      headers: { cookie: 'refresh_token=not-a-real-token' },
+    });
+    expect(bogus.statusCode).toBe(401);
   });
 
   it('persists the GitHub token as ciphertext only — plaintext never in DB or response', async () => {

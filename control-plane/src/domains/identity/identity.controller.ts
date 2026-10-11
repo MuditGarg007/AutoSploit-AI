@@ -20,7 +20,6 @@ import { IdentityService } from './identity.service.js';
 
 const STATE_COOKIE = 'gh_oauth_state';
 const REFRESH_COOKIE = 'refresh_token';
-const ACCESS_TOKEN_PARAM = 'access_token';
 
 // GET /auth/github, /auth/callback, /me (docs/control-plane.md §4.A).
 // OAuth handshake is manual fetch, not passport — keeps the code and the
@@ -81,31 +80,34 @@ export class IdentityController {
       session.refreshToken,
       this.refreshCookieOpts(session.refreshExpiresAt),
     );
-    // Hand the short-lived access token back to the browser frontend (a
-    // different origin than this API). The SPA reads it off the URL, stores it,
-    // and sends it as a Bearer token; the httpOnly refresh cookie above backs
-    // the silent re-issue at POST /auth/refresh.
-    res.redirect(
-      302,
-      `${this.env.frontendUrl}/dashboard?${ACCESS_TOKEN_PARAM}=${encodeURIComponent(
-        session.accessToken,
-      )}`,
-    );
+    // Redirect to the SPA with NO token on the URL. The httpOnly refresh cookie
+    // set above is all the browser carries back; the SPA mints its first access
+    // token by calling POST /auth/refresh on load (credentials: include sends the
+    // cookie). This keeps the access token out of the address bar, browser
+    // history, the Referer header, and edge/access logs.
+    res.redirect(302, `${this.env.frontendUrl}/dashboard`);
   }
 
   // Silent re-issue: the SPA's access token is short-lived (15 min), so the
   // client POSTs here with the httpOnly refresh cookie to get a fresh access
-  // token (and a rotated refresh cookie). Rotation reuse → the service revokes
-  // the session and returns null → 401 (fail-closed).
+  // token. Refresh is non-rotating (the refresh token is unchanged), so this is
+  // idempotent and safe to call from several tabs / callers at once. We re-set
+  // the cookie only to slide its max-age. Unknown or expired token → the service
+  // returns null and we clear the cookie → 401 (fail-closed).
   @Post('auth/refresh')
   async refresh(
     @Req() req: FastifyRequest,
-    @Res() res: FastifyReply,
+    // passthrough: we use `res` only for the Set-Cookie side-effect and let Nest
+    // serialize the returned body. WITHOUT passthrough a bare `@Res()` plus a
+    // `return` means Nest never sends the response, so the refresh request hangs
+    // until the browser aborts it — every silent re-mint then fails and the user
+    // is bounced to signed-out. (This was a latent bug: no test hit /auth/refresh.)
+    @Res({ passthrough: true }) res: FastifyReply,
   ): Promise<{ accessToken: string }> {
     const presented = req.cookies?.[REFRESH_COOKIE];
     if (!presented) throw new UnauthorizedException('No refresh token');
 
-    const session = await this.identity.rotateRefresh(presented);
+    const session = await this.identity.refreshSession(presented);
     if (!session) {
       res.clearCookie(REFRESH_COOKIE, { path: '/' });
       throw new UnauthorizedException('Refresh token invalid or expired');

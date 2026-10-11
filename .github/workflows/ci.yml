@@ -35,3 +35,66 @@ jobs:
 
       - name: Typecheck
         run: bun run typecheck
+
+  # Auto-deploy the backend to the self-hosted KVM VPS after CI is green on main.
+  # Mirrors the manual path (docs/vps-h3-runbook.md §7.4, HANDOFF-2026-10-10 "Deploy
+  # notes"): the box builds the fat control-plane image ON-BOX (it has no GHCR push
+  # creds), kind-loads it, then `helm upgrade`. We deliberately do NOT reuse
+  # release.yml's GHCR image here — the box does not pull from GHCR, it builds locally.
+  #
+  # Only on a real push to main (never PRs), and only after the `ci` job passes.
+  # NOTE: a redeploy restarts the plane pod and kills the conductor subprocess of any
+  # in-flight engagement (orphans its attacker Pod until timeout) — the job warns if it
+  # finds a live engagement namespace but still proceeds, matching the chosen policy.
+  deploy-vps:
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-vps # never let two deploys race the single box
+      cancel-in-progress: false
+    env:
+      VPS_HOST: ${{ vars.VPS_HOST }} # repo variable; set to the box IP (e.g. 169.58.86.230)
+      VPS_USER: ${{ vars.VPS_USER || 'root' }}
+      CLUSTER: autosploit-hardening
+      NAMESPACE: autosploit-system
+    steps:
+      - name: Write SSH key and known_hosts
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Build, load, and upgrade on the VPS
+        run: |
+          ssh -i ~/.ssh/deploy_key "${VPS_USER}@${VPS_HOST}" \
+            CLUSTER="$CLUSTER" NAMESPACE="$NAMESPACE" 'bash -seuo pipefail' <<'REMOTE'
+          cd /root/AutoSploit-AI
+
+          # Pull the exact commit CI just validated.
+          git fetch origin --prune
+          git reset --hard origin/main
+          TAG=$(git rev-parse --short HEAD)
+          echo ">> deploying control-plane @ $TAG"
+
+          # Disk guard: the fat image is ~2.3 GB and the box has filled to 99% before.
+          df -h / | tail -1
+          docker builder prune -af --filter 'until=72h' || true
+
+          # Warn (do not block) if an engagement is in flight — this deploy will kill it.
+          INFLIGHT=$(kubectl get ns -o name 2>/dev/null | grep -c '/engagement-' || true)
+          if [ "${INFLIGHT:-0}" -gt 0 ]; then
+            echo "::warning:: $INFLIGHT in-flight engagement namespace(s) present; this redeploy will orphan their attacker Pods"
+            kubectl get ns | grep '^engagement-' || true
+          fi
+
+          IMAGE=ghcr.io/muditgarg007/control-plane:$TAG
+          docker build -f control-plane/Dockerfile -t "$IMAGE" .
+          kind load docker-image "$IMAGE" --name "$CLUSTER"
+
+          helm upgrade control-plane deploy/helm/control-plane -n "$NAMESPACE" \
+            --reuse-values --set image.tag="$TAG" --wait --timeout 10m
+          kubectl rollout status deploy/control-plane-control-plane-app -n "$NAMESPACE" --timeout 5m
+          echo ">> deployed $IMAGE"
+          REMOTE

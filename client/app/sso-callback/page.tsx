@@ -1,17 +1,16 @@
-// OAuth landing fallback. The control plane normally redirects straight to
-// /dashboard?access_token=..., but if it is ever pointed here instead, capture
-// the token the same way and forward to the dashboard.
+// OAuth landing fallback. The control plane redirects straight to /dashboard
+// (the refresh cookie is already set; useAuth mints the first access token via
+// /auth/refresh on load). If the callback is ever pointed here instead, just
+// forward to the dashboard and let the same path run.
 "use client";
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { captureTokenFromUrl } from "@/lib/token";
 
 export default function SSOCallback() {
   const router = useRouter();
 
   useEffect(() => {
-    captureTokenFromUrl();
     router.replace("/dashboard");
   }, [router]);
 

@@ -93,66 +93,59 @@ export class IdentityService {
     return { accessToken, refreshToken, refreshExpiresAt: expiresAt, user };
   }
 
-  // Rotating refresh tokens, rotated IN PLACE on a stable session row:
-  //   - presented matches the row's CURRENT hash  → rotate: mint a new access
-  //     token (same session id), generate a new refresh token, and overwrite
-  //     the row's current hash (demoting the old one to prev_refresh_token_hash).
-  //   - presented matches a row's PREV hash        → the token was already
-  //     rotated away and is being replayed. Treat as theft and revoke the whole
-  //     session (the token family), so neither the legitimate holder nor an
-  //     attacker keeps it (fail-closed).
-  //   - no match / expired                         → null (401).
-  // A client that retries a refresh with the same (now-superseded) token after a
-  // successful rotation therefore loses the session; that strictness is the
-  // intended reuse-detection tradeoff.
-  async rotateRefresh(presented: string): Promise<IssuedSession | null> {
+  // Non-rotating refresh on a stable session row. The refresh token is fixed for
+  // the login's lifetime; /auth/refresh only mints a fresh short-lived access
+  // token and slides the session's expiry. The refresh token itself is NOT
+  // changed, so concurrent refreshes (multiple tabs, an SSE reconnect racing a
+  // data fetch, a remount) are idempotent and safe — presenting the same cookie
+  // twice simply mints two access tokens. This deliberately drops the earlier
+  // rotate-on-every-refresh + replay-revoke scheme, which logged a browser out
+  // within minutes because any of those routine races presented a just-rotated
+  // (now "prev") cookie and the server nuked the whole session as suspected theft.
+  //
+  // The token is httpOnly + Secure + SameSite=None, so page JavaScript (and thus
+  // an XSS payload) cannot read it; that is the theft control now. Access tokens
+  // stay 15 min, and logout / expiry still revoke the session.
+  //
+  //   - presented matches a live session's hash → mint a new access token, slide
+  //     expiry, return the SAME refresh token (so the cookie's max-age slides).
+  //   - expired session                         → revoke + null (401).
+  //   - no match                                → null (401, fail-closed).
+  async refreshSession(presented: string): Promise<IssuedSession | null> {
     const presentedHash = this.hash(presented);
 
-    const currentRows = await this.db
+    const rows = await this.db
       .select()
       .from(sessions)
       .where(eq(sessions.refreshTokenHash, presentedHash))
       .limit(1);
-    const current = currentRows[0];
-    if (current) {
-      if (current.expiresAt.getTime() < Date.now()) {
-        await this.revokeSession(current.id);
-        return null;
-      }
-      const nextRefresh = randomBytes(48).toString('base64url');
-      const expiresAt = new Date(
-        Date.now() + this.env.refreshTokenTtlSec * 1000,
-      );
-      await this.db
-        .update(sessions)
-        .set({
-          prevRefreshTokenHash: current.refreshTokenHash,
-          refreshTokenHash: this.hash(nextRefresh),
-          rotatedAt: new Date(),
-          expiresAt,
-        })
-        .where(eq(sessions.id, current.id));
-      const accessToken = await this.mintAccessToken(
-        current.userId,
-        current.id,
-      );
-      const user = await this.getUserById(current.userId);
-      return {
-        accessToken,
-        refreshToken: nextRefresh,
-        refreshExpiresAt: expiresAt,
-        user,
-      };
+    const session = rows[0];
+    if (!session) return null;
+
+    if (session.expiresAt.getTime() < Date.now()) {
+      await this.revokeSession(session.id);
+      return null;
     }
 
-    // Reuse of an already-rotated token → revoke the whole session family.
-    const reuseRows = await this.db
-      .select()
-      .from(sessions)
-      .where(eq(sessions.prevRefreshTokenHash, presentedHash))
-      .limit(1);
-    if (reuseRows[0]) await this.revokeSession(reuseRows[0].id);
-    return null;
+    // Sliding session: an actively-refreshing client never expires; an idle one
+    // lapses refreshTokenTtlSec after its last refresh.
+    const expiresAt = new Date(Date.now() + this.env.refreshTokenTtlSec * 1000);
+    await this.db
+      .update(sessions)
+      .set({ expiresAt, rotatedAt: new Date() })
+      .where(eq(sessions.id, session.id));
+
+    const accessToken = await this.mintAccessToken(
+      session.userId,
+      session.id,
+    );
+    const user = await this.getUserById(session.userId);
+    return {
+      accessToken,
+      refreshToken: presented,
+      refreshExpiresAt: expiresAt,
+      user,
+    };
   }
 
   private mintAccessToken(userId: string, sessionId: string): Promise<string> {

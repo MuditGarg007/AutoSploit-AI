@@ -7,8 +7,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  captureTokenFromUrl,
+  accessTokenExpiryMs,
   clearToken,
+  getFreshToken,
   getToken,
   hasBackend,
   refreshToken,
@@ -37,9 +38,13 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
 const MOCK_USER: AuthUser = { id: "mock", githubLogin: "demo" };
 
 /**
- * Owns the browser session. On mount: capture any token from the OAuth redirect,
- * then load the signed-in user from GET /me (refreshing once on a 401). `signOut`
- * revokes the server session and returns the user to the marketing root.
+ * Owns the browser session. On mount: mint an access token from the httpOnly
+ * refresh cookie if none is held yet (the OAuth callback redirects here with no
+ * token on the URL), load the signed-in user from GET /me (refreshing once on a
+ * 401), then run a proactive timer that re-mints the access token ~60s before it
+ * expires — so a sitting-idle dashboard stays signed in instead of silently
+ * dying and only noticing on the next request. `signOut` revokes the server
+ * session and returns the user to the marketing root.
  */
 export function useAuth(): {
   user: AuthUser | null;
@@ -56,14 +61,42 @@ export function useAuth(): {
   );
 
   useEffect(() => {
-    let alive = true;
-
     if (!hasBackend()) return;
 
-    captureTokenFromUrl();
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const signedOut = () => {
+      clearToken();
+      if (alive) {
+        setUser(null);
+        setStatus("signed-out");
+      }
+    };
+
+    // Re-mint the access token ~60s before it expires, then reschedule off the
+    // new token. A failed refresh means the session is truly gone → sign out.
+    const scheduleRefresh = (token: string | null): void => {
+      if (timer) clearTimeout(timer);
+      const expMs = accessTokenExpiryMs(token);
+      const LEAD_MS = 60_000;
+      // Unknown expiry: re-check in a minute rather than hammering.
+      const delay = expMs
+        ? Math.max(5_000, expMs - Date.now() - LEAD_MS)
+        : 60_000;
+      timer = setTimeout(() => {
+        void refreshToken().then((next) => {
+          if (!alive) return;
+          if (next) scheduleRefresh(next);
+          else signedOut();
+        });
+      }, delay);
+    };
 
     const loadMe = async (retry: boolean): Promise<void> => {
-      const token = getToken();
+      // Mint from the refresh cookie when no token is held (first load after the
+      // OAuth redirect lands here with none).
+      const token = await getFreshToken();
       if (!token) {
         if (alive) {
           setUser(null);
@@ -81,11 +114,7 @@ export function useAuth(): {
           if (next) return loadMe(false);
         }
         if (!res.ok) {
-          clearToken();
-          if (alive) {
-            setUser(null);
-            setStatus("signed-out");
-          }
+          signedOut();
           return;
         }
         const me = (await res.json()) as MeResponse;
@@ -96,6 +125,7 @@ export function useAuth(): {
             avatarUrl: me.avatarUrl,
           });
           setStatus("signed-in");
+          scheduleRefresh(getToken());
         }
       } catch {
         if (alive) {
@@ -108,6 +138,7 @@ export function useAuth(): {
     void loadMe(true);
     return () => {
       alive = false;
+      if (timer) clearTimeout(timer);
     };
   }, []);
 

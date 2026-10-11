@@ -128,9 +128,24 @@ kubectl -n $NS logs attacker -f   # phase / tool_call / tool_result / cost / fin
   `currentState` helper). Unit spec `control-plane/test/engagement-worker.spec.ts` (5 tests, hermetic:
   skips redelivery at attacking/completed/failed/halted; first delivery at `dispatched` still walks).
   `nest build` green. **Deploy:** rebuild + roll the fat image (recipe above) to stop the live spam.
-- **Harness image is local `h3-local` tag, not digest-pinned.** `conductor.harnessImage=
-  docker.io/library/harness:h3-local`, present on the node via kind load. M5 release pipeline owes a
-  digest-pinned push. Fine on single-node kind; breaks multi-node / GKE.
+- **Harness image digest-pinned — DONE 2026-10-10.** Built from `./harness` and pushed to
+  `ghcr.io/muditgarg007/harness` (from a dev box with GHCR `write:packages`, not the VPS — the VPS still
+  has no GHCR creds). Durable digest:
+  `ghcr.io/muditgarg007/harness@sha256:04adceda7de26cba87e516ae6c0362186cf8e6976827764a67f321b5989b0115`.
+  `conductor.harnessImage` set to that digest on `control-plane` (helm rev 21, `--reuse-values`), so
+  `AUTOSPLOIT_HARNESS_IMAGE` on the plane pod now carries it and future `--reuse-values` upgrades keep it.
+  GHCR package stays **private**: the digest was `docker save` + `scp` + `kind load image-archive`'d onto
+  the `autosploit-hardening` node, so the attacker pod resolves it locally (`imagePullPolicy: IfNotPresent`)
+  with no pull and no creds. Verified: a throwaway pod on the digest ref reached Running (no
+  ImagePullBackOff), and `helm template` of the engagement chart with the digest renders the attacker Pod
+  `image:` as the digest. **Caveat (same class as Redis #1):** the node-loaded image does **not** survive a
+  kind node wipe/recreate — re-run the `docker save | kind load image-archive` step after any node
+  rebuild, OR, for real multi-node/GKE, make the GHCR package pullable (public, or an imagePullSecret) and
+  set `--set attacker.imagePullPolicy=Always`. The durable digest already lives in GHCR either way.
+  NOT done: a full Kaniko-built live engagement to `status=complete` against the digest — Phase-B/`--k8s`
+  only accepts a buildable Dockerfile repo (prebuilt-image sources are deferred, roadmap §5), so it needs a
+  known small vulnerable Dockerfile target repo; the attacker-uses-the-digest claim is already proven by the
+  render chain above.
 - **#1 Redis not in any manifest.** Created imperatively; a node/pod wipe drops it and engagements hang
   at "starting" (tell: quota-meter log). Restore `kubectl create deployment redis --image=redis:7-alpine
   -n autosploit-system` (+ service). Check Redis first if engagements hang.
