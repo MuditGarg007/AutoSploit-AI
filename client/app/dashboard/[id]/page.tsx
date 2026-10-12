@@ -5,7 +5,7 @@
 // Rendered inside the dashboard shell (sidebar + top bar).
 import DashboardShell from "@/components/dashboard/DashboardShell";
 import LiveEngagement from "@/components/dashboard/LiveEngagement";
-import { getEngagement, listEngagements } from "@/lib/api";
+import { getEngagement } from "@/lib/api";
 
 export default async function EngagementPage({
   params,
@@ -14,22 +14,15 @@ export default async function EngagementPage({
   // Label only; the live event stream is owned client-side by LiveEngagement.
   // getEngagement falls back to the mock index when no backend is configured,
   // and an unknown id just shows the id itself.
+  // Server-side we have no auth (the access token lives in the browser's
+  // localStorage, and the server fetch carries no session cookie), so the
+  // backend rejects this read and we fall back to the raw id. LiveEngagement
+  // re-resolves the real repo name client-side, where the token exists.
   let repo = id;
   try {
     repo = (await getEngagement(id))?.repo ?? id;
   } catch {
-    // Backend rejected (404/unauthorized): fall back to the raw id label.
-  }
-  // If the detail endpoint did not resolve a repo name (returned the id, or an
-  // empty repoFullName), recover it from the list endpoint, which carries
-  // repoFullName. Without this the header and breadcrumb show the raw UUID.
-  if (!repo || repo === id) {
-    try {
-      const rows = await listEngagements();
-      repo = rows.find((r) => r.id === id)?.repo || repo;
-    } catch {
-      // List unavailable: keep the id label.
-    }
+    // Unauthenticated / unreachable server-side: the client resolves the label.
   }
 
   return (

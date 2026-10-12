@@ -7,9 +7,10 @@
 // panes. State that always matters (lifecycle, connection) rides in the header
 // above the tabs; a halt is surfaced on every tab so it is never missed.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useEngagementStream } from "@/hooks/useEngagementStream";
+import { listEngagements } from "@/lib/api";
 import {
   isTerminal,
   severityRank,
@@ -86,6 +87,33 @@ export default function LiveEngagement({
   const { view, status } = useEngagementStream(id, { mock });
   const [tab, setTab] = useState<TabId>("overview");
 
+  // The server shell could not authenticate, so `repo` arrives as the raw id.
+  // Re-resolve the real "owner/name" label client-side (the access token lives
+  // in the browser), the same source the sidebar uses. The list endpoint
+  // carries repoFullName; match this engagement by id. `label` is derived, so
+  // there is no synchronous setState in the effect, and the id guard keeps a
+  // previous run's name from flashing when navigating between engagements.
+  const [resolved, setResolved] = useState<{ id: string; repo: string } | null>(
+    null,
+  );
+  const label =
+    repo !== id ? repo : resolved?.id === id ? resolved.repo : repo;
+  useEffect(() => {
+    if (repo !== id) return;
+    let alive = true;
+    listEngagements()
+      .then((rows) => {
+        const name = rows.find((r) => r.id === id)?.repo;
+        if (alive && name) setResolved({ id, repo: name });
+      })
+      .catch(() => {
+        /* keep the id label on a transient failure */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [id, repo]);
+
   const stage = view.currentStage as EngagementState | undefined;
   const done = Boolean(view.halt) || (stage ? isTerminal(stage) : false);
   const state = deriveState(view);
@@ -133,9 +161,9 @@ export default function LiveEngagement({
   return (
     <>
       <PageHeader
-        title={repo}
+        title={label}
         titleMono
-        crumbs={[{ label: "Engagements", href: "/dashboard" }, { label: repo }]}
+        crumbs={[{ label: "Engagements", href: "/dashboard" }, { label }]}
         actions={
           <div className="flex items-center gap-5">
             <StateLabel state={state} />
