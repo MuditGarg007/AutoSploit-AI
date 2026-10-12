@@ -3,8 +3,10 @@
 
 import MicroSlats from "@/components/MicroSlats";
 import Navbar from "@/components/Navbar";
-import Features from "@/components/Features";
+import Problem from "@/components/Problem";
 import HowItWorks from "@/components/HowItWorks";
+import Features from "@/components/Features";
+import LiveDashboard from "@/components/LiveDashboard";
 import Isolation from "@/components/Isolation";
 import CTA from "@/components/CTA";
 import Footer from "@/components/Footer";
@@ -50,7 +52,7 @@ function Hero() {
         </p>
 
         <SignInTrigger className="mt-10 flex h-11 items-center rounded-md bg-accent px-6 text-sm font-semibold text-white transition-colors hover:bg-accent-bright active:scale-[0.98]">
-          Get started
+          Connect GitHub
         </SignInTrigger>
       </div>
     </section>
@@ -63,8 +65,10 @@ export default function Home() {
       <Navbar />
       <main className="flex-1">
         <Hero />
-        <Features />
+        <Problem />
         <HowItWorks />
+        <Features />
+        <LiveDashboard />
         <Isolation />
         <CTA />
       </main>

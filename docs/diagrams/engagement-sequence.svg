@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 770" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L7,3 L0,6 Z" fill="#a1a1aa"/></marker>
+    <marker id="g" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L7,3 L0,6 Z" fill="#2f9e44"/></marker>
+    <marker id="r" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L7,3 L0,6 Z" fill="#8C1C2B"/></marker>
+  </defs>
+  <rect x="0" y="0" width="960" height="770" fill="#000000"/>
+
+  <!-- lifelines -->
+  <g stroke="#ffffff1a" stroke-width="1">
+    <line x1="70" y1="66" x2="70" y2="744"/>
+    <line x1="180" y1="66" x2="180" y2="744"/>
+    <line x1="310" y1="66" x2="310" y2="744"/>
+    <line x1="430" y1="66" x2="430" y2="744"/>
+    <line x1="545" y1="66" x2="545" y2="744"/>
+    <line x1="670" y1="66" x2="670" y2="744"/>
+    <line x1="795" y1="66" x2="795" y2="744"/>
+    <line x1="905" y1="66" x2="905" y2="744"/>
+  </g>
+
+  <!-- participant headers -->
+  <g>
+    <rect x="34" y="30" width="72" height="30" rx="6" fill="#0e0e0e" stroke="#ffffff26"/><text x="70" y="49" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="600">User</text>
+    <rect x="140" y="30" width="80" height="30" rx="6" fill="#0e0e0e" stroke="#ffffff26"/><text x="180" y="49" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="600">Client</text>
+    <rect x="256" y="30" width="108" height="30" rx="6" fill="#0e0e0e" stroke="#8C1C2B"/><text x="310" y="49" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="600">Control plane</text>
+    <rect x="392" y="30" width="76" height="30" rx="6" fill="#0e0e0e" stroke="#ffffff26"/><text x="430" y="49" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="600">Queue</text>
+    <rect x="497" y="30" width="96" height="30" rx="6" fill="#0e0e0e" stroke="#ffffff26"/><text x="545" y="49" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="600">Conductor</text>
+    <rect x="618" y="30" width="104" height="30" rx="6" fill="#0e0e0e" stroke="#ffffff26"/><text x="670" y="49" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="600">Provisioner</text>
+    <rect x="757" y="30" width="76" height="30" rx="6" fill="#0e0e0e" stroke="#8C1C2B"/><text x="795" y="49" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="600">Target</text>
+    <rect x="865" y="30" width="80" height="30" rx="6" fill="#0e0e0e" stroke="#8C1C2B"/><text x="905" y="49" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="600">Harness</text>
+  </g>
+
+  <!-- messages -->
+  <!-- m1 -->
+  <path d="M70,100 L178,100" fill="none" stroke="#a1a1aa" stroke-width="1.3" marker-end="url(#a)"/>
+  <text x="74" y="94" fill="#d4d4d8" font-size="10.5">GitHub OAuth login (records consent)</text>
+  <!-- m2 -->
+  <path d="M180,133 L308,133" fill="none" stroke="#a1a1aa" stroke-width="1.3" marker-end="url(#a)"/>
+  <text x="184" y="127" fill="#d4d4d8" font-size="10.5">select repo, confirm authorization</text>
+  <!-- m3 self CP -->
+  <path d="M310,160 h40 v16 h-38" fill="none" stroke="#a1a1aa" stroke-width="1.3" marker-end="url(#a)"/>
+  <text x="356" y="172" fill="#d4d4d8" font-size="10.5">quota check, write engagement (Postgres)</text>
+  <!-- m4 -->
+  <path d="M310,205 L428,205" fill="none" stroke="#a1a1aa" stroke-width="1.3" marker-end="url(#a)"/>
+  <text x="314" y="199" fill="#d4d4d8" font-size="10.5">enqueue job</text>
+  <!-- m5 -->
+  <path d="M430,238 L543,238" fill="none" stroke="#a1a1aa" stroke-width="1.3" marker-end="url(#a)"/>
+  <text x="434" y="232" fill="#d4d4d8" font-size="10.5">dequeue</text>
+  <!-- m6 -->
+  <path d="M545,271 L668,271" fill="none" stroke="#a1a1aa" stroke-width="1.3" marker-end="url(#a)"/>
+  <text x="549" y="265" fill="#d4d4d8" font-size="10.5">provision(repo)</text>
+  <!-- m7 -->
+  <path d="M670,304 L793,304" fill="none" stroke="#a1a1aa" stroke-width="1.3" marker-end="url(#a)"/>
+  <text x="674" y="298" fill="#d4d4d8" font-size="10.5">clone, build, boot</text>
+  <!-- m8 return -->
+  <path d="M670,337 L547,337" fill="none" stroke="#a1a1aa" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#a)"/>
+  <text x="666" y="331" text-anchor="end" fill="#a1a1aa" font-size="10.5">scope.yaml (immutable allowlist + ports)</text>
+  <!-- m9 -->
+  <path d="M545,370 L903,370" fill="none" stroke="#a1a1aa" stroke-width="1.3" marker-end="url(#a)"/>
+  <text x="549" y="364" fill="#d4d4d8" font-size="10.5">launch(scope, model key)</text>
+
+  <!-- loop box -->
+  <rect x="150" y="392" width="788" height="150" rx="6" fill="none" stroke="#ffffff26" stroke-dasharray="3 3"/>
+  <rect x="150" y="392" width="92" height="20" rx="0" fill="#171717" stroke="#ffffff26"/>
+  <text x="160" y="406" fill="#a1a1aa" font-size="10" font-weight="600">loop · agent loop</text>
+  <!-- m10 self harness -->
+  <path d="M905,428 h-42 v16 h40" fill="none" stroke="#a1a1aa" stroke-width="1.3" marker-end="url(#a)"/>
+  <text x="859" y="440" text-anchor="end" fill="#d4d4d8" font-size="10.5">interceptor checks scope + budget</text>
+  <!-- m11 harness->target -->
+  <path d="M905,470 L797,470" fill="none" stroke="#2f9e44" stroke-width="1.4" marker-end="url(#g)"/>
+  <text x="901" y="464" text-anchor="end" fill="#2f9e44" font-size="10.5">scoped tool calls</text>
+  <!-- m12 harness-->cp events -->
+  <path d="M905,503 L312,503" fill="none" stroke="#2f9e44" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#g)"/>
+  <text x="901" y="497" text-anchor="end" fill="#2f9e44" font-size="10.5">phase / tool / finding / cost events</text>
+  <!-- m13 cp-->client sse -->
+  <path d="M310,530 L182,530" fill="none" stroke="#2f9e44" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#g)"/>
+  <text x="306" y="524" text-anchor="end" fill="#2f9e44" font-size="10.5">SSE stream</text>
+
+  <!-- m14 return report -->
+  <path d="M905,572 L547,572" fill="none" stroke="#a1a1aa" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#a)"/>
+  <text x="901" y="566" text-anchor="end" fill="#a1a1aa" font-size="10.5">report.json</text>
+  <!-- m15 -->
+  <path d="M545,605 L312,605" fill="none" stroke="#a1a1aa" stroke-width="1.3" marker-end="url(#a)"/>
+  <text x="541" y="599" text-anchor="end" fill="#d4d4d8" font-size="10.5">persist findings + report</text>
+  <!-- m16 teardown target -->
+  <path d="M545,638 L793,638" fill="none" stroke="#8C1C2B" stroke-width="1.4" marker-end="url(#r)"/>
+  <text x="549" y="632" fill="#b85a66" font-size="10.5">teardown</text>
+  <!-- m17 teardown harness -->
+  <path d="M545,671 L903,671" fill="none" stroke="#8C1C2B" stroke-width="1.4" marker-end="url(#r)"/>
+  <text x="549" y="665" fill="#b85a66" font-size="10.5">teardown</text>
+  <!-- m18 final report -->
+  <path d="M310,708 L182,708" fill="none" stroke="#2f9e44" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#g)"/>
+  <text x="306" y="702" text-anchor="end" fill="#2f9e44" font-size="10.5">final report</text>
+</svg>

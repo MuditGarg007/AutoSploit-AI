@@ -7,18 +7,18 @@ export default function CTA() {
     <section className="border-t border-white/10 px-6 py-28 sm:py-36">
       <div className="mx-auto flex max-w-2xl flex-col items-center text-center">
         <span className="font-mono text-xs uppercase tracking-widest text-faint">
-          self-hosted · your cluster
+          your app · your repo
         </span>
         <h2 className="mt-6 text-4xl font-semibold leading-tight tracking-tight text-text sm:text-6xl">
-          Find the way in first.
+          Find out before someone else does.
         </h2>
         <p className="mt-5 max-w-md text-base leading-relaxed text-muted">
-          Run your first engagement on infrastructure you control.
+          Connect GitHub, pick a repo, and run your first engagement.
         </p>
 
         <div className="mt-10 flex items-center gap-3">
           <SignInTrigger className="flex h-11 items-center rounded-md bg-accent px-6 text-sm font-semibold text-white transition-colors hover:bg-accent-bright active:scale-[0.98]">
-            Get started
+            Connect GitHub
           </SignInTrigger>
           <a
             href="#docs"

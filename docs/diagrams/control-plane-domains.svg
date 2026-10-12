@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 400" font-family="Inter, Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L7,3 L0,6 Z" fill="#a1a1aa"/></marker>
+  </defs>
+  <rect x="0" y="0" width="820" height="400" fill="#000000"/>
+
+  <!-- A Identity -->
+  <rect x="60" y="36" width="220" height="56" rx="6" fill="#0e0e0e" stroke="#ffffff26"/>
+  <rect x="60" y="36" width="4" height="56" rx="2" fill="#8C1C2B"/>
+  <text x="78" y="58" fill="#ffffff" font-size="13" font-weight="600">A · Identity</text>
+  <text x="78" y="78" fill="#a1a1aa" font-size="10.5">users · sessions · github_tokens</text>
+  <!-- B Repos -->
+  <rect x="320" y="36" width="220" height="56" rx="6" fill="#0e0e0e" stroke="#ffffff26"/>
+  <rect x="320" y="36" width="4" height="56" rx="2" fill="#8C1C2B"/>
+  <text x="338" y="58" fill="#ffffff" font-size="13" font-weight="600">B · Repos</text>
+  <text x="338" y="78" fill="#a1a1aa" font-size="10.5">repo_cache (deployable probe)</text>
+  <text x="560" y="68" fill="#71717a" font-size="10.5">own their tables,</text>
+  <text x="560" y="82" fill="#71717a" font-size="10.5">no cross-domain reads</text>
+
+  <!-- C Lifecycle -->
+  <rect x="120" y="140" width="200" height="74" rx="6" fill="#0e0e0e" stroke="#8C1C2B" stroke-width="1.4"/>
+  <text x="220" y="172" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="600">C · Lifecycle</text>
+  <text x="220" y="192" text-anchor="middle" fill="#a1a1aa" font-size="10.5">engagements</text>
+  <text x="220" y="206" text-anchor="middle" fill="#71717a" font-size="10">sole writer of state</text>
+  <!-- D Telemetry -->
+  <rect x="500" y="140" width="240" height="74" rx="6" fill="#0e0e0e" stroke="#ffffff26"/>
+  <text x="620" y="172" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="600">D · Telemetry</text>
+  <text x="620" y="192" text-anchor="middle" fill="#a1a1aa" font-size="10.5">findings · cost</text>
+  <text x="620" y="206" text-anchor="middle" fill="#71717a" font-size="10">projections of the Kafka log</text>
+
+  <!-- Conductor -->
+  <rect x="120" y="288" width="200" height="56" rx="6" fill="#070707" stroke="#ffffff1f"/>
+  <text x="220" y="313" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="600">Conductor</text>
+  <text x="220" y="330" text-anchor="middle" fill="#a1a1aa" font-size="10">runs the engagement</text>
+  <!-- E Reports -->
+  <rect x="500" y="288" width="240" height="56" rx="6" fill="#0e0e0e" stroke="#ffffff26"/>
+  <text x="620" y="313" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="600">E · Reports</text>
+  <text x="620" y="330" text-anchor="middle" fill="#a1a1aa" font-size="10">reports + object-store refs</text>
+
+  <!-- seams -->
+  <path d="M320,165 L498,165" fill="none" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+  <text x="409" y="159" text-anchor="middle" fill="#a1a1aa" font-size="10.5">mints ingest token</text>
+  <path d="M500,195 L322,195" fill="none" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+  <text x="411" y="210" text-anchor="middle" fill="#a1a1aa" font-size="10.5">validates token</text>
+
+  <path d="M220,214 L220,286" fill="none" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+  <text x="228" y="256" fill="#a1a1aa" font-size="10.5">shells</text>
+  <path d="M620,286 L620,216" fill="none" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+  <text x="628" y="256" fill="#a1a1aa" font-size="10.5">reads D</text>
+</svg>
