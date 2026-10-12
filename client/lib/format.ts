@@ -11,6 +11,19 @@ export function fmtInt(n: number | undefined): string {
   return n.toLocaleString("en-US");
 }
 
+// Trim an in-cluster target host to something readable. The deployed host is a
+// full k8s DNS name like
+// "target.engagement-<uuid>.svc.cluster.local:5000"; for a glance tile the
+// service label and port carry all the meaning. Non-cluster hosts (a bare IP,
+// an external host) pass through unchanged. The full host stays in the Scope tab.
+export function fmtHost(host: string | undefined): string {
+  if (!host) return "pending";
+  if (!host.includes(".svc.cluster.local")) return host;
+  const [hostPart, port] = host.split(":");
+  const label = hostPart.split(".")[0] || hostPart;
+  return port ? `${label}:${port}` : label;
+}
+
 // 48120 -> "48.1k", 1324000 -> "1.32M". Used for token counts.
 export function fmtCompact(n: number | undefined): string {
   if (n === undefined) return "0";

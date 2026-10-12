@@ -5,7 +5,7 @@
 // Rendered inside the dashboard shell (sidebar + top bar).
 import DashboardShell from "@/components/dashboard/DashboardShell";
 import LiveEngagement from "@/components/dashboard/LiveEngagement";
-import { getEngagement } from "@/lib/api";
+import { getEngagement, listEngagements } from "@/lib/api";
 
 export default async function EngagementPage({
   params,
@@ -19,6 +19,17 @@ export default async function EngagementPage({
     repo = (await getEngagement(id))?.repo ?? id;
   } catch {
     // Backend rejected (404/unauthorized): fall back to the raw id label.
+  }
+  // If the detail endpoint did not resolve a repo name (returned the id, or an
+  // empty repoFullName), recover it from the list endpoint, which carries
+  // repoFullName. Without this the header and breadcrumb show the raw UUID.
+  if (!repo || repo === id) {
+    try {
+      const rows = await listEngagements();
+      repo = rows.find((r) => r.id === id)?.repo || repo;
+    } catch {
+      // List unavailable: keep the id label.
+    }
   }
 
   return (

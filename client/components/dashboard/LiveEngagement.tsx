@@ -16,7 +16,7 @@ import {
   type EngagementState,
   type EngagementView,
 } from "@/lib/events";
-import { fmtElapsed, fmtUsd, fmtInt } from "@/lib/format";
+import { fmtElapsed, fmtUsd, fmtInt, fmtHost } from "@/lib/format";
 import PageHeader from "./PageHeader";
 import StatTiles, { type Stat } from "./StatTiles";
 import Tabs, { type TabDef } from "./Tabs";
@@ -100,7 +100,7 @@ export default function LiveEngagement({
   const stats: Stat[] = [
     {
       label: "Target",
-      value: view.host ?? "pending",
+      value: fmtHost(view.host),
       hint: "deployed host",
       icon: ShieldIcon,
     },

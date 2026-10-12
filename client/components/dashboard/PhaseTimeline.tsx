@@ -5,6 +5,7 @@
 
 import { cn, fmtTime } from "@/lib/format";
 import type { PhaseData } from "@/lib/events";
+import Markdown from "./Markdown";
 
 export default function PhaseTimeline({
   phases,
@@ -56,9 +57,9 @@ export default function PhaseTimeline({
               </span>
             </div>
             {p.summary && (
-              <p className="mt-1 text-sm leading-relaxed text-muted">
+              <Markdown className="mt-1 text-sm leading-relaxed text-muted">
                 {p.summary}
-              </p>
+              </Markdown>
             )}
             {p.reasoning && (
               <p className="mt-1 text-xs leading-relaxed text-faint">
