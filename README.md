@@ -59,7 +59,7 @@ touches untrusted input. The orchestration layer runs one conductor per engageme
 a sandbox that holds the attacker and the target.
 
 <p align="center">
-  <img src="docs/diagrams/architecture.svg" alt="Four-plane architecture" width="900">
+  <img src="docs/diagrams/architecture.png" alt="Four-plane architecture" width="900">
 </p>
 
 **Client** handles GitHub OAuth (login plus consent record), the repo picker, the live dashboard, and
@@ -104,7 +104,7 @@ The platform runs offensive tools and executes attacker-influenced code in its o
 isolation is the first requirement, not an afterthought.
 
 <p align="center">
-  <img src="docs/diagrams/security-egress.svg" alt="Egress model: exactly two edges leave the sandbox" width="860">
+  <img src="docs/diagrams/security-egress.png" alt="Egress model: exactly two edges leave the sandbox" width="860">
 </p>
 
 Three realities drive the design:
@@ -144,7 +144,7 @@ both sandboxes are destroyed and nothing offensive outlives the run.
 ### Engagement lifecycle
 
 <p align="center">
-  <img src="docs/diagrams/lifecycle-state.svg" alt="Engagement lifecycle state machine" width="760">
+  <img src="docs/diagrams/lifecycle-state.png" alt="Engagement lifecycle state machine" width="760">
 </p>
 
 ---
@@ -153,10 +153,6 @@ both sandboxes are destroyed and nothing offensive outlives the run.
 
 A Bun plus Turborepo monorepo. The TypeScript client and control plane are Bun workspaces. The three
 Python services (conductor, provisioner, harness) are managed with `uv`.
-
-<p align="center">
-  <img src="docs/diagrams/component-map.svg" alt="Monorepo component map" width="880">
-</p>
 
 | Path | Language | Responsibility |
 |------|----------|----------------|
@@ -173,9 +169,19 @@ Python services (conductor, provisioner, harness) are managed with `uv`.
 Each domain owns its own tables, has a single writer, and exposes one client capability. Cross-domain
 coupling is limited to three seams.
 
-<p align="center">
-  <img src="docs/diagrams/control-plane-domains.svg" alt="Control plane bounded contexts and seams" width="820">
-</p>
+| Domain | Owns | Capability |
+|--------|------|------------|
+| **A · Identity** | `users`, `sessions`, `github_tokens` | GitHub OAuth, the token vault, per-engagement credentials |
+| **B · Repos** | `repo_cache` | The deployable probe: is this repo buildable? |
+| **C · Lifecycle** | `engagements` | Sole writer of engagement state; dispatches jobs |
+| **D · Telemetry** | `findings`, `cost` | Projections of the Kafka log; the live SSE feed |
+| **E · Reports** | `reports`, object-store refs | Assembles the final report on completion |
+
+No slice reads another's tables. The three seams between them:
+
+1. **C mints, D validates.** Lifecycle mints a short-lived, signed, per-engagement ingest token at dispatch; Telemetry validates its signature. Shared key, no runtime call, fail-closed.
+2. **C → conductor.** The worker shells `conductor run <repo> --engagement-id <id>` (Phase A) or creates a k8s Job (Phase B) — the frozen provisioner and harness CLIs.
+3. **E reads D.** Reports reads `findings` and pulls artifacts from object storage, triggered by C's terminal transition.
 
 ---
 

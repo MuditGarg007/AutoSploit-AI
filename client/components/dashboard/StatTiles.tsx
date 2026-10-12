@@ -24,7 +24,7 @@ function Tile({ stat }: { stat: Stat }) {
       </span>
       <span
         className={cn(
-          "font-mono text-xl tabular-nums",
+          "font-mono text-xl tabular-nums [overflow-wrap:anywhere]",
           stat.accent ? "text-accent-bright" : "text-text",
         )}
       >

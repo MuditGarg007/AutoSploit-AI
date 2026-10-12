@@ -29,6 +29,7 @@ import HaltBanner from "./HaltBanner";
 import StateLabel from "./StateLabel";
 import ConnectionStatus from "./ConnectionStatus";
 import Panel from "./Panel";
+import Markdown from "./Markdown";
 import { MetaRow } from "./MetaPanel";
 import {
   TargetIcon,
@@ -182,9 +183,11 @@ export default function LiveEngagement({
                       <StateLabel state={state} />
                     </div>
                     {latestPhase.summary && (
-                      <p className="text-sm leading-relaxed text-muted">
+                      <Markdown
+                        className="max-h-96 overflow-y-auto text-sm leading-relaxed text-muted"
+                      >
                         {latestPhase.summary}
-                      </p>
+                      </Markdown>
                     )}
                     {latestPhase.reasoning && (
                       <p className="text-xs leading-relaxed text-faint">

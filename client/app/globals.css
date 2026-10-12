@@ -11,10 +11,13 @@
 
   /* structure */
   --canvas: #000000; /* AMOLED page background: true black only */
-  --surface: #0e0e0e; /* cards / panels */
-  --surface-2: #151515; /* elevated / hovered surface */
-  --border: rgba(255, 255, 255, 0.10);
-  --border-strong: rgba(255, 255, 255, 0.16);
+  --surface: #121212; /* cards / panels: lifted so a card reads by its fill */
+  --surface-2: #1c1c1c; /* elevated / hovered surface */
+  /* Hairlines kept whisper-quiet: on true black a 10% white outline reads as a
+     hard, boxy edge. Cards separate by fill (--surface); borders only hint. */
+  --border: rgba(255, 255, 255, 0.05);
+  --border-strong: rgba(255, 255, 255, 0.10);
+  --border-soft: rgba(255, 255, 255, 0.03);
 
   /* text */
   --text: #ffffff; /* headings */
@@ -36,6 +39,7 @@
   --color-surface-2: var(--surface-2);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
+  --color-border-soft: var(--border-soft);
   --color-text: var(--text);
   --color-muted: var(--muted);
   --color-faint: var(--faint);
@@ -54,6 +58,35 @@
 
 * {
   border-color: var(--border);
+}
+
+/*
+  Site-wide border retune. Components hardcode `border-white/10` (and a few
+  /20, /25, /5) rather than the --border token, so repointing the token alone
+  would not reach them. These unlayered rules override Tailwind's layered
+  utilities (unlayered always wins over @layer) so every hairline (cards,
+  tiles, tabs, header, sidebar, inputs, badges) picks up the quiet neutral
+  edge in one place. Keeps the design-system intent (hairline borders) while
+  killing the harsh white outline look on true black.
+*/
+.border-white\/10 {
+  border-color: var(--border);
+}
+.border-white\/20,
+.border-white\/25 {
+  border-color: var(--border-strong);
+}
+.border-white\/5 {
+  border-color: var(--border-soft);
+}
+.focus\:border-white\/20:focus {
+  border-color: var(--border-strong);
+}
+.divide-white\/10 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border);
+}
+.divide-white\/5 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border-soft);
 }
 
 body {
