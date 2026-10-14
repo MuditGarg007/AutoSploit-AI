@@ -14,6 +14,7 @@ export default function Panel({
   className,
   bodyClassName,
   flush,
+  floating,
   children,
 }: {
   title?: string;
@@ -22,12 +23,20 @@ export default function Panel({
   className?: string;
   bodyClassName?: string;
   flush?: boolean;
+  // Floating variant: used when the panel sits *over* the activity console in
+  // the engagement cockpit, so it needs a translucent blurred fill and a
+  // restrained elevation to read against the scrolling text behind it, rather
+  // than the flat solid surface a panel gets when it sits in document flow.
+  floating?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <section
       className={cn(
-        "overflow-hidden rounded-md border border-white/10 bg-surface",
+        "overflow-hidden rounded-md border border-white/10",
+        floating
+          ? "bg-surface/80 shadow-lg shadow-black/40 backdrop-blur-md"
+          : "bg-surface",
         className,
       )}
     >

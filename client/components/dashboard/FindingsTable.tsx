@@ -21,7 +21,7 @@ function Header() {
   );
 }
 
-function FindingRow({ f }: { f: FindingData & { ts: string } }) {
+function FindingRow({ f, bare }: { f: FindingData & { ts: string }; bare?: boolean }) {
   const [open, setOpen] = useState(false);
   const expandable = Boolean(f.evidence || f.repro);
   return (
@@ -30,7 +30,8 @@ function FindingRow({ f }: { f: FindingData & { ts: string } }) {
         type="button"
         onClick={() => expandable && setOpen((o) => !o)}
         className={cn(
-          "flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors",
+          "flex w-full items-center gap-3 text-left transition-colors",
+          bare ? "py-2" : "px-4 py-3.5",
           expandable && "cursor-pointer hover:bg-white/[0.03]",
         )}
       >
@@ -48,7 +49,7 @@ function FindingRow({ f }: { f: FindingData & { ts: string } }) {
         )}
       </button>
       {open && (
-        <div className="space-y-3 px-4 pb-4 pl-4">
+        <div className={cn("space-y-3 pb-4", bare ? "" : "px-4 pl-4")}>
           {f.evidence && (
             <div>
               <span className="text-[11px] font-medium uppercase tracking-wider text-faint">
@@ -80,20 +81,29 @@ function FindingRow({ f }: { f: FindingData & { ts: string } }) {
 
 export default function FindingsTable({
   findings,
+  // Bare: drop the header row and the card padding so the table can sit inside
+  // a lean, chrome-less rail section (the engagement cockpit) instead of a
+  // bordered panel.
+  bare,
 }: {
   findings: (FindingData & { ts: string })[];
+  bare?: boolean;
 }) {
   if (findings.length === 0) {
-    return <p className="px-4 py-6 text-sm text-faint">No findings yet.</p>;
+    return (
+      <p className={cn("text-sm text-faint", bare ? "" : "px-4 py-6")}>
+        No findings yet.
+      </p>
+    );
   }
   const sorted = [...findings].sort(
     (a, b) => severityRank(a.severity) - severityRank(b.severity),
   );
   return (
     <div>
-      <Header />
+      {!bare && <Header />}
       {sorted.map((f) => (
-        <FindingRow key={f.id} f={f} />
+        <FindingRow key={f.id} f={f} bare={bare} />
       ))}
     </div>
   );

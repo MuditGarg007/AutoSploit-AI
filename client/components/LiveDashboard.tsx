@@ -28,8 +28,10 @@ export default function LiveDashboard() {
           </p>
         </div>
 
-        {/* dashboard snapshot */}
+        {/* dashboard snapshot: a still of the real (dark) product UI, so it
+            stays dark-themed even when this section is light. */}
         <div
+          data-theme="dark"
           className="overflow-hidden rounded-xl border border-white/10 bg-surface"
           style={{ boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}
         >

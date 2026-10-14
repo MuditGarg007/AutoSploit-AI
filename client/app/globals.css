@@ -2,19 +2,87 @@
 
 /*
   AutoSploit AI theme.
-  True-black AMOLED canvas, hairline borders, one burgundy accent used sparingly.
-  Single accent only: no second color, no gradients.
+  Two themes, same single burgundy accent. Light is the default: a pure-white
+  canvas with near-black text. Dark is the original true-black AMOLED canvas,
+  opted into via data-theme="dark" on <html>. Hairline borders either way, one
+  burgundy accent used sparingly, no second color, no gradients.
 */
 
 :root {
+  color-scheme: light;
+
+  /* structure */
+  --canvas: #ffffff; /* page background: pure white */
+  --surface: #f6f6f7; /* cards / panels: lifted off white by a hair */
+  --surface-2: #ececef; /* elevated / hovered surface */
+  /* Hairlines kept whisper-quiet on white, same intent as on black: cards
+     separate mostly by fill (--surface); borders only hint. */
+  --border: rgba(0, 0, 0, 0.09);
+  --border-strong: rgba(0, 0, 0, 0.15);
+  --border-soft: rgba(0, 0, 0, 0.05);
+
+  /* text */
+  --text: #0a0a0b; /* headings: near-black */
+  --muted: #52525b; /* body (zinc-600) */
+  --faint: #71717a; /* captions, mono labels (zinc-500) */
+
+  /* accent: single burgundy (unchanged across themes) */
+  --accent: #8c1c2b;
+  --accent-bright: #a8283a; /* hover only */
+  --accent-deep: #5a101c; /* pressed */
+  --accent-soft: rgba(140, 28, 43, 0.12); /* washes, focus rings */
+  --accent-line: rgba(140, 28, 43, 0.30); /* accent hairlines */
+  --accent-purple: var(--accent-deep); /* legacy alias, burgundy (no purple) */
+
+  /* theme-flip tokens: feed the hardcoded black/white utility overrides below
+     so components that write `bg-white/5`, `bg-black`, etc. follow the theme
+     without touching every component. */
+  --hover: rgba(0, 0, 0, 0.045); /* bg-white/5, hover washes */
+  --fill-strong: rgba(0, 0, 0, 0.12); /* bg-white/10, bg-white/25 fills */
+  --code-bg: #f4f4f5; /* bg-black code/pre blocks */
+  --scrim: rgba(0, 0, 0, 0.45); /* modal / drawer backdrops */
+  --nav-glass: rgba(255, 255, 255, 0.65); /* scrolled navbar glass */
+  --scrollbar-thumb: #c9c9ce;
+  --scrollbar-thumb-hover: #b4b4ba;
+}
+
+/*
+  Scoped themes. data-theme lives on <html> for the app-wide theme (dashboard
+  toggle), but it also works on any wrapper element so a subtree can pin its own
+  theme regardless of the app theme. The landing page uses this to alternate
+  light/dark sections and keep the hero dark. Tokens are inherited CSS vars, so
+  a wrapper that sets them re-themes everything under it.
+*/
+[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas: #ffffff;
+  --surface: #f6f6f7;
+  --surface-2: #ececef;
+  --border: rgba(0, 0, 0, 0.09);
+  --border-strong: rgba(0, 0, 0, 0.15);
+  --border-soft: rgba(0, 0, 0, 0.05);
+  --text: #0a0a0b;
+  --muted: #52525b;
+  --faint: #71717a;
+  --accent-soft: rgba(140, 28, 43, 0.12);
+
+  --hover: rgba(0, 0, 0, 0.045);
+  --fill-strong: rgba(0, 0, 0, 0.12);
+  --code-bg: #f4f4f5;
+  --scrim: rgba(0, 0, 0, 0.45);
+  --nav-glass: rgba(255, 255, 255, 0.65);
+  --scrollbar-thumb: #c9c9ce;
+  --scrollbar-thumb-hover: #b4b4ba;
+}
+
+[data-theme="dark"] {
   color-scheme: dark;
 
   /* structure */
   --canvas: #000000; /* AMOLED page background: true black only */
   --surface: #121212; /* cards / panels: lifted so a card reads by its fill */
   --surface-2: #1c1c1c; /* elevated / hovered surface */
-  /* Hairlines kept whisper-quiet: on true black a 10% white outline reads as a
-     hard, boxy edge. Cards separate by fill (--surface); borders only hint. */
   --border: rgba(255, 255, 255, 0.05);
   --border-strong: rgba(255, 255, 255, 0.10);
   --border-soft: rgba(255, 255, 255, 0.03);
@@ -24,13 +92,17 @@
   --muted: #a1a1aa; /* body (zinc-400) */
   --faint: #71717a; /* captions, mono labels (zinc-500) */
 
-  /* accent: single burgundy */
-  --accent: #8c1c2b;
-  --accent-bright: #a8283a; /* hover only */
-  --accent-deep: #5a101c; /* pressed */
-  --accent-soft: rgba(140, 28, 43, 0.14); /* washes, focus rings */
-  --accent-line: rgba(140, 28, 43, 0.30); /* accent hairlines */
-  --accent-purple: var(--accent-deep); /* legacy alias, burgundy (no purple) */
+  /* accent unchanged */
+  --accent-soft: rgba(140, 28, 43, 0.14);
+
+  /* theme-flip tokens */
+  --hover: rgba(255, 255, 255, 0.05);
+  --fill-strong: rgba(255, 255, 255, 0.18);
+  --code-bg: #000000;
+  --scrim: rgba(0, 0, 0, 0.8);
+  --nav-glass: rgba(0, 0, 0, 0.4);
+  --scrollbar-thumb: #222222;
+  --scrollbar-thumb-hover: #333333;
 }
 
 @theme inline {
@@ -82,11 +154,41 @@
 .focus\:border-white\/20:focus {
   border-color: var(--border-strong);
 }
+.border-white\/\[0\.06\] {
+  border-color: var(--border);
+}
 .divide-white\/10 > :not([hidden]) ~ :not([hidden]) {
   border-color: var(--border);
 }
 .divide-white\/5 > :not([hidden]) ~ :not([hidden]) {
   border-color: var(--border-soft);
+}
+
+/*
+  Background retune, same idea as the borders above. Components hardcode
+  white/black alpha fills (hover washes, code blocks, meter fills, scrims,
+  the glass navbar) rather than tokens. These unlayered rules repoint each one
+  at a theme-flip token so light and dark both read correctly from one place.
+*/
+.bg-white\/5,
+.hover\:bg-white\/5:hover,
+.bg-white\/\[0\.03\],
+.hover\:bg-white\/\[0\.03\]:hover {
+  background-color: var(--hover);
+}
+.bg-white\/10,
+.bg-white\/25 {
+  background-color: var(--fill-strong);
+}
+.bg-black {
+  background-color: var(--code-bg);
+}
+.bg-black\/80,
+.bg-black\/60 {
+  background-color: var(--scrim);
+}
+.bg-black\/40 {
+  background-color: var(--nav-glass);
 }
 
 body {
@@ -128,10 +230,10 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #222222;
+  background: var(--scrollbar-thumb);
   border-radius: 6px;
   border: 2px solid var(--canvas);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #333333;
+  background: var(--scrollbar-thumb-hover);
 }

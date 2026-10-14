@@ -54,7 +54,7 @@ export default function Navbar() {
             <a
               key={l.label}
               href={l.href}
-              className="rounded-md px-3 py-1.5 text-sm text-muted transition-colors hover:bg-white/5 hover:text-text"
+              className="rounded-md px-3 py-1.5 text-sm text-text transition-colors hover:bg-white/5"
             >
               {l.label}
             </a>
@@ -67,14 +67,14 @@ export default function Navbar() {
           <>
             <Link
               href="/dashboard"
-              className="ml-1 flex h-9 items-center rounded-md px-4 text-sm font-medium text-muted transition-colors hover:bg-white/5 hover:text-text"
+              className="ml-1 flex h-9 items-center rounded-md px-4 text-sm font-medium text-text transition-colors hover:bg-white/5"
             >
               Dashboard
             </Link>
             <button
               type="button"
               onClick={() => void signOut()}
-              className="flex h-9 items-center rounded-md px-4 text-sm font-medium text-muted transition-colors hover:bg-white/5 hover:text-text active:scale-[0.98]"
+              className="flex h-9 items-center rounded-md px-4 text-sm font-medium text-text transition-colors hover:bg-white/5 active:scale-[0.98]"
             >
               Sign out
             </button>

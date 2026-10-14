@@ -154,7 +154,18 @@ function FindingEntry({
   );
 }
 
-export default function ActivityStream({ view }: { view: EngagementView }) {
+export default function ActivityStream({
+  view,
+  fill,
+}: {
+  view: EngagementView;
+  // Cockpit mode: the console *is* the page. The scroll area fills its parent
+  // and the content sits in a center channel (wide side padding at xl) so the
+  // floating surface/scope/budget panels overlay the empty gutters, not the
+  // transcript. Top/bottom padding clears the overlaid top bar and gives the
+  // last line room to breathe.
+  fill?: boolean;
+}) {
   const timeline = useMemo(() => buildTimeline(view), [view]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -173,7 +184,12 @@ export default function ActivityStream({ view }: { view: EngagementView }) {
 
   if (timeline.length === 0) {
     return (
-      <p className="px-4 py-10 text-center text-sm text-faint">
+      <p
+        className={cn(
+          "text-center text-sm text-faint",
+          fill ? "px-4 pt-16" : "px-4 py-10",
+        )}
+      >
         Waiting for the agent to start.
       </p>
     );
@@ -183,9 +199,14 @@ export default function ActivityStream({ view }: { view: EngagementView }) {
     <div
       ref={scrollRef}
       onScroll={onScroll}
-      className="max-h-[36rem] overflow-y-auto px-4"
+      className={cn(
+        "overflow-y-auto",
+        fill
+          ? "h-full px-4 pb-16 pt-6 xl:px-[19rem]"
+          : "max-h-[calc(100vh-13rem)] min-h-[32rem] px-4",
+      )}
     >
-      <ul className="flex flex-col">
+      <ul className="mx-auto flex max-w-3xl flex-col">
         {timeline.map((e) => {
           if (e.kind === "phase")
             return <PhaseEntry key={`p-${e.ord}`} p={e.data as PhaseData & { ts: string }} />;

@@ -1,7 +1,7 @@
 import DashboardShell from "@/components/dashboard/DashboardShell";
 
-// Shown while a dashboard route resolves. Keeps the shell so the sidebar and
-// top bar stay put; the content column holds a quiet placeholder.
+// Shown while a dashboard route resolves. Keeps the shell so the top nav stays
+// put; the content column holds a quiet placeholder.
 export default function DashboardLoading() {
   return (
     <DashboardShell>

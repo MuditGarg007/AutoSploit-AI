@@ -1,6 +1,6 @@
-// The attack surface as the operator should picture it: the deployed target
-// host and the ports discovery exposed, with findings pinned to the port they
-// name. The engine does not emit a structured port-to-finding link, so the pin
+// The attack surface as the operator should picture it: the ports discovery
+// exposed, with findings pinned to the port they name. The engine does not emit
+// a structured port-to-finding link, so the pin
 // is a light heuristic (the port number appears in the finding's title or
 // evidence); it is a hint, not a claim, and unmatched findings are counted
 // separately below. Service labels for well-known ports are hints too.
@@ -36,11 +36,9 @@ function findingsForPort(
 }
 
 export default function SurfaceMap({
-  host,
   ports,
   findings,
 }: {
-  host?: string;
   ports?: unknown;
   findings: (FindingData & { ts: string })[];
 }) {
@@ -48,15 +46,6 @@ export default function SurfaceMap({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-faint">
-          Target
-        </span>
-        <span className="break-all font-mono text-sm text-text">
-          {host ?? "awaiting deploy"}
-        </span>
-      </div>
-
       {list.length === 0 ? (
         <p className="text-sm text-faint">No ports discovered yet.</p>
       ) : (
