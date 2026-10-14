@@ -1,11 +1,12 @@
 "use client";
 
-// Client orchestrator for one engagement's live view. Holds the single SSE
-// subscription, derives the header state from the phase stream, and splits the
-// detail into tabs so no one screen has to carry everything: an Overview glance,
-// then the activity feed, findings, phases, and the immutable scope on their own
-// panes. State that always matters (lifecycle, connection) rides in the header
-// above the tabs; a halt is surfaced on every tab so it is never missed.
+// Client orchestrator for one engagement's live view, laid out as a cockpit: a
+// single screen that updates in place, no tabs to hunt through. A lifecycle
+// strip and the vital stats sit up top; the left column is the live activity
+// console (the agent working, in its own words and commands); the right column
+// holds the attack surface and the budget. Findings and the immutable scope run
+// full-width below, so the detail the old tabs carried is all still here, just
+// visible at once. A halt is a run-ending fact, pinned above everything.
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -13,16 +14,15 @@ import { useEngagementStream } from "@/hooks/useEngagementStream";
 import { listEngagements } from "@/lib/api";
 import {
   isTerminal,
-  severityRank,
   type EngagementState,
   type EngagementView,
 } from "@/lib/events";
 import { fmtElapsed, fmtUsd, fmtInt, fmtHost } from "@/lib/format";
 import PageHeader from "./PageHeader";
 import StatTiles, { type Stat } from "./StatTiles";
-import Tabs, { type TabDef } from "./Tabs";
-import PhaseTimeline from "./PhaseTimeline";
-import ToolCallFeed from "./ToolCallFeed";
+import PhaseStrip from "./PhaseStrip";
+import ActivityStream from "./ActivityStream";
+import SurfaceMap from "./SurfaceMap";
 import FindingsTable from "./FindingsTable";
 import CostMeter from "./CostMeter";
 import ScopePanel from "./ScopePanel";
@@ -30,8 +30,6 @@ import HaltBanner from "./HaltBanner";
 import StateLabel from "./StateLabel";
 import ConnectionStatus from "./ConnectionStatus";
 import Panel from "./Panel";
-import Markdown from "./Markdown";
-import { MetaRow } from "./MetaPanel";
 import {
   TargetIcon,
   ClockIcon,
@@ -60,20 +58,24 @@ function deriveState(view: EngagementView): EngagementState {
   return "queued";
 }
 
-// Order the severities that are actually present, most severe first, for the
-// Overview breakdown. Buckets with no findings are dropped.
-function severityCounts(view: EngagementView): { label: string; n: number }[] {
-  const counts = new Map<string, number>();
-  for (const f of view.findings) {
-    const key = f.severity.toLowerCase();
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .sort((a, b) => severityRank(a[0]) - severityRank(b[0]))
-    .map(([label, n]) => ({ label, n }));
+// Latest timestamp seen on any stream slice, for elapsed and burn rate.
+function lastTs(view: EngagementView): string | undefined {
+  const cands = [
+    view.phases[view.phases.length - 1]?.ts,
+    view.tools[view.tools.length - 1]?.ts,
+    view.findings[view.findings.length - 1]?.ts,
+  ].filter((t): t is string => Boolean(t));
+  if (cands.length === 0) return undefined;
+  return cands.reduce((a, b) => (new Date(a) > new Date(b) ? a : b));
 }
 
-type TabId = "overview" | "activity" | "findings" | "phases" | "scope";
+function fmtDur(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "n/a";
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
 
 export default function LiveEngagement({
   id,
@@ -85,14 +87,10 @@ export default function LiveEngagement({
   mock?: boolean;
 }) {
   const { view, status } = useEngagementStream(id, { mock });
-  const [tab, setTab] = useState<TabId>("overview");
 
   // The server shell could not authenticate, so `repo` arrives as the raw id.
   // Re-resolve the real "owner/name" label client-side (the access token lives
-  // in the browser), the same source the sidebar uses. The list endpoint
-  // carries repoFullName; match this engagement by id. `label` is derived, so
-  // there is no synchronous setState in the effect, and the id guard keeps a
-  // previous run's name from flashing when navigating between engagements.
+  // in the browser), the same source the sidebar uses.
   const [resolved, setResolved] = useState<{ id: string; repo: string } | null>(
     null,
   );
@@ -119,11 +117,21 @@ export default function LiveEngagement({
   const state = deriveState(view);
 
   const first = view.phases[0]?.ts;
-  const last = view.phases[view.phases.length - 1]?.ts;
+  const last = lastTs(view);
   const elapsed = first && last ? fmtElapsed(first, last) : "0:00";
 
-  const latestPhase = view.phases[view.phases.length - 1];
-  const sev = severityCounts(view);
+  // Burn rate over elapsed wall time, and a rough runway to the spend cap.
+  const usd = view.cost?.usd ?? 0;
+  const capUsd = view.cost?.caps?.usd;
+  const elapsedSec =
+    first && last
+      ? Math.max(0, (new Date(last).getTime() - new Date(first).getTime()) / 1000)
+      : 0;
+  const ratePerMin = elapsedSec > 0 ? (usd / elapsedSec) * 60 : 0;
+  const etaSec =
+    !done && capUsd && ratePerMin > 0
+      ? ((capUsd - usd) / ratePerMin) * 60
+      : undefined;
 
   const stats: Stat[] = [
     {
@@ -139,21 +147,13 @@ export default function LiveEngagement({
       icon: ClockIcon,
     },
     { label: "Findings", value: fmtInt(view.findings.length), icon: TargetIcon },
-    { label: "Spend", value: fmtUsd(view.cost?.usd ?? 0), icon: DollarIcon },
+    { label: "Spend", value: fmtUsd(usd), icon: DollarIcon },
     {
-      label: "Events",
-      value: fmtInt(view.eventCount),
-      hint: "stream total",
-      icon: ActivityIcon,
+      label: "Tool calls",
+      value: fmtInt(view.tools.length),
+      hint: "actions run",
+      icon: WrenchIcon,
     },
-  ];
-
-  const tabs: TabDef[] = [
-    { id: "overview", label: "Overview" },
-    { id: "activity", label: "Activity", count: view.tools.length },
-    { id: "findings", label: "Findings", count: view.findings.length },
-    { id: "phases", label: "Phases", count: view.phases.length },
-    { id: "scope", label: "Scope" },
   ];
 
   const halted = view.halt || view.refusal;
@@ -180,7 +180,6 @@ export default function LiveEngagement({
         }
       />
 
-      {/* A halt is a run-ending fact; keep it visible no matter the open tab. */}
       {halted && (
         <div className="mt-6">
           <HaltBanner halt={view.halt} refusal={view.refusal} />
@@ -188,137 +187,73 @@ export default function LiveEngagement({
       )}
 
       <div className="mt-6">
-        <Tabs
-          tabs={tabs}
-          active={tab}
-          onChange={(id) => setTab(id as TabId)}
-        />
+        <PhaseStrip state={state} />
       </div>
 
       <div className="mt-6">
-        {tab === "overview" && (
-          <div className="flex flex-col gap-6">
-            <StatTiles stats={stats} />
+        <StatTiles stats={stats} />
+      </div>
 
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_20rem]">
-              <Panel title="Current phase" icon={ActivityIcon}>
-                {latestPhase ? (
-                  <div className="flex flex-col gap-3">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="text-base font-medium capitalize text-text">
-                        {latestPhase.stage}
-                      </span>
-                      <StateLabel state={state} />
-                    </div>
-                    {latestPhase.summary && (
-                      <Markdown
-                        className="max-h-96 overflow-y-auto text-sm leading-relaxed text-muted"
-                      >
-                        {latestPhase.summary}
-                      </Markdown>
-                    )}
-                    {latestPhase.reasoning && (
-                      <p className="text-xs leading-relaxed text-faint">
-                        {latestPhase.reasoning}
-                      </p>
-                    )}
-                    {(latestPhase.attempt !== undefined ||
-                      latestPhase.nudges !== undefined) && (
-                      <div className="mt-1 flex flex-col divide-y divide-white/5">
-                        {latestPhase.attempt !== undefined && (
-                          <MetaRow
-                            label="Attempt"
-                            value={fmtInt(latestPhase.attempt)}
-                          />
-                        )}
-                        {latestPhase.nudges !== undefined && (
-                          <MetaRow
-                            label="Nudges"
-                            value={fmtInt(latestPhase.nudges)}
-                          />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-sm text-faint">Awaiting first phase.</p>
-                )}
-              </Panel>
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_22rem]">
+        <Panel
+          title="Live activity"
+          icon={ActivityIcon}
+          flush
+          bodyClassName="py-2"
+          aside={<ConnectionStatus status={status} />}
+        >
+          <ActivityStream view={view} />
+        </Panel>
 
-              <Panel title="Budget" icon={CoinsIcon}>
-                <CostMeter cost={view.cost} />
-              </Panel>
-            </div>
-
-            <Panel title="Findings by severity" icon={TargetIcon}>
-              {sev.length === 0 ? (
-                <p className="text-sm text-faint">No findings yet.</p>
-              ) : (
-                <div className="flex flex-wrap gap-x-10 gap-y-4">
-                  {sev.map((s) => (
-                    <div key={s.label} className="flex flex-col gap-1">
-                      <span className="text-[11px] font-medium uppercase tracking-wider text-faint">
-                        {s.label}
-                      </span>
-                      <span className="font-mono text-xl tabular-nums text-text">
-                        {fmtInt(s.n)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Panel>
-          </div>
-        )}
-
-        {tab === "activity" && (
-          <Panel
-            title="Tool calls"
-            icon={WrenchIcon}
-            aside={
-              <span className="font-mono text-xs text-faint">
-                {view.tools.length}
-              </span>
-            }
-          >
-            <ToolCallFeed tools={view.tools} />
-          </Panel>
-        )}
-
-        {tab === "findings" && (
-          <Panel
-            title="Findings"
-            icon={TargetIcon}
-            flush
-            aside={
-              <span className="font-mono text-xs text-faint">
-                {view.findings.length}
-              </span>
-            }
-          >
-            <FindingsTable findings={view.findings} />
-          </Panel>
-        )}
-
-        {tab === "phases" && (
-          <Panel title="Phases" icon={ClockIcon}>
-            <PhaseTimeline
-              phases={view.phases}
-              currentStage={view.currentStage}
+        <div className="flex flex-col gap-6">
+          <Panel title="Attack surface" icon={ShieldIcon}>
+            <SurfaceMap
+              host={view.host}
+              ports={view.ports}
+              findings={view.findings}
             />
           </Panel>
-        )}
 
-        {tab === "scope" && (
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_20rem]">
-            <Panel title="Scope" icon={ShieldIcon}>
-              <ScopePanel host={view.host} ports={view.ports} />
-            </Panel>
-            <Panel title="Budget" icon={CoinsIcon}>
+          <Panel title="Budget" icon={CoinsIcon}>
+            <div className="flex flex-col gap-5">
               <CostMeter cost={view.cost} />
-            </Panel>
-          </div>
-        )}
+              {ratePerMin > 0 && (
+                <div className="flex items-center justify-between border-t border-white/10 pt-4 text-xs">
+                  <span className="text-faint">
+                    Burn <span className="font-mono text-muted">{fmtUsd(ratePerMin)}/min</span>
+                  </span>
+                  {etaSec !== undefined && (
+                    <span className="text-faint">
+                      Runway{" "}
+                      <span className="font-mono text-muted">
+                        ~{fmtDur(etaSec)}
+                      </span>
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </Panel>
+        </div>
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_22rem]">
+        <Panel
+          title="Findings"
+          icon={TargetIcon}
+          flush
+          aside={
+            <span className="font-mono text-xs text-faint">
+              {view.findings.length}
+            </span>
+          }
+        >
+          <FindingsTable findings={view.findings} />
+        </Panel>
+
+        <Panel title="Scope" icon={ShieldIcon}>
+          <ScopePanel host={view.host} ports={view.ports} />
+        </Panel>
       </div>
     </>
   );

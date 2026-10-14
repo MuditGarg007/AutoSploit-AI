@@ -31,12 +31,35 @@ export interface ToolCallData {
   args?: Record<string, unknown>;
 }
 
+// On success the harness spreads the matching structured result shape
+// (ShellResult / HttpResult / FindingId / CompleteResult) into this payload,
+// with long text fields (stdout / stderr / body) truncated to 16k for the
+// stream (harness contracts/results.py + tools/truncate.py). The whole payload
+// travels to the browser intact (ingest, Redis last-mile, SSE); these fields
+// let the activity console render what the agent actually ran and saw instead
+// of a bare "done". All optional: an error result carries only `error`.
 export interface ToolResultData {
   id: string | null;
   name?: string | null;
   is_error?: boolean;
   error?: string;
   truncated?: boolean;
+  // ShellResult (run_shell)
+  cmd?: string;
+  exit_code?: number;
+  stdout?: string;
+  stderr?: string;
+  timed_out?: boolean;
+  // HttpResult (http_request)
+  method?: string;
+  url?: string;
+  status?: number;
+  headers?: Record<string, string>;
+  body?: string;
+  // FindingId / CompleteResult
+  summary?: string;
+  severity?: string;
+  title?: string;
 }
 
 // Severity is a free string in the contract; these are the values the engine
@@ -127,6 +150,7 @@ export function severityRank(s: string): number {
 export interface ToolExchange {
   id: string | null;
   key: string; // stable react key even when id is null
+  ord: number; // global arrival order, for the merged timeline
   name: string;
   args?: Record<string, unknown>;
   ts: string;
@@ -137,12 +161,12 @@ export interface ToolExchange {
 // Reduced view of the whole stream. useEngagementStream builds this; every
 // panel reads a slice of it.
 export interface EngagementView {
-  phases: (PhaseData & { ts: string })[];
+  phases: (PhaseData & { ts: string; ord: number })[];
   currentStage?: string;
   host?: string;
   ports?: unknown;
   tools: ToolExchange[];
-  findings: (FindingData & { ts: string })[];
+  findings: (FindingData & { ts: string; ord: number })[];
   cost?: CostData;
   refusal?: RefusalData & { ts: string };
   halt?: HaltData & { ts: string };
@@ -165,10 +189,14 @@ export function reduceEvent(
     lastEventId: ev.id,
     eventCount: view.eventCount + 1,
   };
+  // Monotonic arrival index, stamped on every stream entry so the activity
+  // console can merge phases, tool exchanges, and findings back into one
+  // ordered transcript (ts alone is not enough: same-ts events need stable order).
+  const ord = view.eventCount;
 
   switch (ev.type) {
     case "phase": {
-      next.phases = [...view.phases, { ...ev.data, ts: ev.ts }];
+      next.phases = [...view.phases, { ...ev.data, ts: ev.ts, ord }];
       next.currentStage = ev.data.stage;
       if (ev.data.host) next.host = ev.data.host;
       if (ev.data.ports !== undefined) next.ports = ev.data.ports;
@@ -178,6 +206,7 @@ export function reduceEvent(
       const exchange: ToolExchange = {
         id: ev.data.id,
         key: ev.data.id ?? `${ev.data.name}-${ev.id}`,
+        ord,
         name: ev.data.name,
         args: ev.data.args,
         ts: ev.ts,
@@ -202,6 +231,7 @@ export function reduceEvent(
           {
             id: ev.data.id,
             key: `orphan-${ev.id}`,
+            ord,
             name: ev.data.name ?? "unknown",
             ts: ev.ts,
             result: ev.data,
@@ -214,7 +244,7 @@ export function reduceEvent(
     case "finding": {
       // De-dupe by id (replay can re-deliver).
       if (view.findings.some((f) => f.id === ev.data.id)) break;
-      next.findings = [...view.findings, { ...ev.data, ts: ev.ts }];
+      next.findings = [...view.findings, { ...ev.data, ts: ev.ts, ord }];
       break;
     }
     case "cost": {
@@ -232,4 +262,28 @@ export function reduceEvent(
   }
 
   return next;
+}
+
+// A single entry in the merged activity transcript the live console renders:
+// phases (the agent's self-declared stage and reasoning), tool exchanges (the
+// command or request it ran, paired with the result once it lands), and
+// findings, interleaved in true arrival order. Refusal and halt are terminal
+// beats surfaced separately as a banner, so they are not folded in here.
+export type TimelineEntry =
+  | { kind: "phase"; ord: number; ts: string; data: PhaseData }
+  | { kind: "tool"; ord: number; ts: string; exchange: ToolExchange }
+  | { kind: "finding"; ord: number; ts: string; data: FindingData & { ts: string } };
+
+// Fold the three ordered slices of the view into one transcript, oldest first.
+// Pure and cheap; the console memoises it on view identity.
+export function buildTimeline(view: EngagementView): TimelineEntry[] {
+  const out: TimelineEntry[] = [];
+  for (const p of view.phases)
+    out.push({ kind: "phase", ord: p.ord, ts: p.ts, data: p });
+  for (const t of view.tools)
+    out.push({ kind: "tool", ord: t.ord, ts: t.ts, exchange: t });
+  for (const f of view.findings)
+    out.push({ kind: "finding", ord: f.ord, ts: f.ts, data: f });
+  out.sort((a, b) => a.ord - b.ord);
+  return out;
 }
