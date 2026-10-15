@@ -19,6 +19,7 @@ const LABELS: Record<EngagementState, string> = {
 };
 
 const DANGER: EngagementState[] = ["halted", "failed"];
+const OK: EngagementState[] = ["completed"];
 const ACTIVE: EngagementState[] = [
   "provisioning",
   "deploying",
@@ -34,12 +35,19 @@ export default function StateLabel({
   className?: string;
 }) {
   const danger = DANGER.includes(state);
+  const ok = OK.includes(state);
   const active = ACTIVE.includes(state);
   return (
     <span
       className={cn(
-        "text-sm font-medium",
-        danger ? "text-accent-bright" : active ? "text-text" : "text-faint",
+        "text-sm font-semibold",
+        danger
+          ? "text-accent-bright"
+          : ok
+            ? "text-ok"
+            : active
+              ? "text-text"
+              : "text-faint",
         className,
       )}
     >

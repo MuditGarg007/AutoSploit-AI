@@ -17,14 +17,24 @@ import { cn } from "@/lib/format";
 import type { ToolResultData } from "@/lib/events";
 import { ChevronRightIcon } from "./icons";
 
-function Chip({ text, danger }: { text: string; danger?: boolean }) {
+function Chip({
+  text,
+  danger,
+  ok,
+}: {
+  text: string;
+  danger?: boolean;
+  ok?: boolean;
+}) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider",
+        "inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider",
         danger
           ? "border-accent-line text-accent-bright"
-          : "border-white/10 text-faint",
+          : ok
+            ? "border-ok-line text-ok"
+            : "border-white/10 text-faint",
       )}
     >
       {text}
@@ -78,6 +88,7 @@ export default function ResultBlock({ result }: { result: ToolResultData }) {
   // HttpResult
   if (result.status !== undefined || result.url !== undefined) {
     const bad = (result.status ?? 0) >= 400;
+    const good = (result.status ?? 0) >= 200 && (result.status ?? 0) < 300;
     const headerText = result.headers
       ? Object.entries(result.headers)
           .map(([k, v]) => `${k}: ${v}`)
@@ -87,7 +98,7 @@ export default function ResultBlock({ result }: { result: ToolResultData }) {
       <div className="mt-2">
         <div className="flex flex-wrap items-center gap-2">
           {result.status !== undefined && (
-            <Chip text={String(result.status)} danger={bad} />
+            <Chip text={String(result.status)} danger={bad} ok={good} />
           )}
           {result.truncated && <Chip text="truncated" />}
           {headerText && (

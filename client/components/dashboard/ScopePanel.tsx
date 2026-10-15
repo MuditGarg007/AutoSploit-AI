@@ -32,7 +32,7 @@ export default function ScopePanel({
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
         <span className="text-xs text-faint">Target</span>
-        <span className="font-mono text-sm text-text">
+        <span className="font-mono text-sm font-semibold text-text">
           {host ?? "awaiting deploy"}
         </span>
         <span className="font-mono text-xs text-muted">
@@ -54,7 +54,7 @@ export default function ScopePanel({
               <span
                 className={cn(
                   "flex items-center gap-1.5 text-xs font-medium",
-                  e.rule === "deny" ? "text-accent-bright" : "text-faint",
+                  e.rule === "deny" ? "text-accent-bright" : "text-ok",
                 )}
               >
                 {e.rule === "deny" ? (

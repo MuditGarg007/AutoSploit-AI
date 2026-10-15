@@ -31,6 +31,13 @@
   --accent-bright: #a8283a; /* hover only */
   --accent-deep: #5a101c; /* pressed */
   --accent-soft: rgba(140, 28, 43, 0.12); /* washes, focus rings */
+  /* Status cues. A restrained traffic-light, used only where state reads at a
+     glance: ok (allow / live / completed / 2xx), warn (medium severity /
+     near-cap / reconnecting). Red stays the burgundy accent. */
+  --ok: #15803d;
+  --ok-line: rgba(21, 128, 61, 0.3);
+  --warn: #b45309;
+  --warn-line: rgba(180, 83, 9, 0.3);
   --accent-line: rgba(140, 28, 43, 0.30); /* accent hairlines */
   --accent-purple: var(--accent-deep); /* legacy alias, burgundy (no purple) */
 
@@ -66,6 +73,10 @@
   --muted: #52525b;
   --faint: #71717a;
   --accent-soft: rgba(140, 28, 43, 0.12);
+  --ok: #15803d;
+  --ok-line: rgba(21, 128, 61, 0.3);
+  --warn: #b45309;
+  --warn-line: rgba(180, 83, 9, 0.3);
 
   --hover: rgba(0, 0, 0, 0.045);
   --fill-strong: rgba(0, 0, 0, 0.12);
@@ -94,6 +105,10 @@
 
   /* accent unchanged */
   --accent-soft: rgba(140, 28, 43, 0.14);
+  --ok: #34d399;
+  --ok-line: rgba(52, 211, 153, 0.3);
+  --warn: #fbbf24;
+  --warn-line: rgba(251, 191, 36, 0.3);
 
   /* theme-flip tokens */
   --hover: rgba(255, 255, 255, 0.05);
@@ -121,6 +136,10 @@
   --color-accent-soft: var(--accent-soft);
   --color-accent-line: var(--accent-line);
   --color-accent-purple: var(--accent-purple);
+  --color-ok: var(--ok);
+  --color-ok-line: var(--ok-line);
+  --color-warn: var(--warn);
+  --color-warn-line: var(--warn-line);
 
   --font-sans: var(--font-geist-sans);
   /* Site uses a single typeface. The mono token maps to Geist Sans so existing

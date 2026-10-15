@@ -7,14 +7,14 @@ import type { CostData } from "@/lib/events";
 
 function Bar({ frac }: { frac: number }) {
   const pct = Math.min(100, Math.max(0, frac * 100));
-  const near = frac >= 0.8;
+  // Quiet until it matters: neutral under 80%, amber as it approaches the cap,
+  // burgundy once it is about to trip the fail-closed halt.
+  const fill =
+    frac >= 0.95 ? "bg-accent-bright" : frac >= 0.8 ? "bg-warn" : "bg-white/25";
   return (
     <div className="h-1 w-full overflow-hidden rounded-full bg-white/5">
       <div
-        className={cn(
-          "h-full rounded-full transition-[width] duration-500",
-          near ? "bg-accent-bright" : "bg-white/25",
-        )}
+        className={cn("h-full rounded-full transition-[width] duration-500", fill)}
         style={{ width: `${pct}%` }}
       />
     </div>
@@ -36,9 +36,9 @@ function Metric({
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between">
         <span className="text-xs text-faint">{label}</span>
-        <span className="font-mono text-sm text-text">
+        <span className="font-mono text-sm font-semibold text-text">
           {value}
-          {cap && <span className="text-faint"> / {cap}</span>}
+          {cap && <span className="font-normal text-faint"> / {cap}</span>}
         </span>
       </div>
       {frac !== undefined && <Bar frac={frac} />}

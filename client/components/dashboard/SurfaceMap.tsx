@@ -58,7 +58,7 @@ export default function SurfaceMap({
                 className="flex items-center justify-between gap-3 py-2"
               >
                 <span className="flex items-baseline gap-2">
-                  <span className="font-mono text-sm text-text tabular-nums">
+                  <span className="font-mono text-sm font-semibold text-text tabular-nums">
                     {port}
                   </span>
                   {SERVICE[port] && (

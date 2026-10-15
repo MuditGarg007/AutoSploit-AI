@@ -7,7 +7,7 @@ import { cn } from "@/lib/format";
 const STYLES: Record<string, string> = {
   critical: "text-accent-bright border-accent-line",
   high: "text-accent border-accent-line",
-  medium: "text-muted border-border-strong",
+  medium: "text-warn border-warn-line",
   low: "text-faint border-border",
   info: "text-faint border-border",
 };

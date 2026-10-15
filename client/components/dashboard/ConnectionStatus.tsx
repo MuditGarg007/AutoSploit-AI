@@ -14,13 +14,16 @@ const LABEL: Record<StreamStatus, string> = {
 
 export default function ConnectionStatus({ status }: { status: StreamStatus }) {
   const degraded = status === "reconnecting" || status === "closed";
+  const live = status === "live";
   return (
     <span
       className={cn(
         "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
         degraded
           ? "border-accent-line text-accent-bright"
-          : "border-white/10 text-faint",
+          : live
+            ? "border-ok-line text-ok"
+            : "border-white/10 text-faint",
       )}
     >
       {LABEL[status]}
