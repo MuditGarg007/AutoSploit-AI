@@ -1,6 +1,7 @@
 import { Global, Inject, Injectable, Module, OnApplicationShutdown } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { EnvService } from '../config/env.service.js';
+import { buildRedisConnectionOptions } from './redis-connection.js';
 
 export const REDIS = Symbol('REDIS');
 
@@ -30,7 +31,10 @@ export class RedisProvider implements OnApplicationShutdown {
       inject: [EnvService],
       useFactory: (env: EnvService): Redis | null => {
         if (!env.redisUrl) return null;
-        const client = new Redis(env.redisUrl, { lazyConnect: true });
+        const client = new Redis(env.redisUrl, {
+          lazyConnect: true,
+          ...buildRedisConnectionOptions(env),
+        });
         // The app must boot even when Redis is down (pre-D slices, health checks).
         // A failed connection must not become an unhandled 'error' event that
         // crashes or log-spams — the SSE path checks liveness on use.

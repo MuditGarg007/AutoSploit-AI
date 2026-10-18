@@ -179,6 +179,28 @@ spec:
                   name: {{ .name }}
                   key: KAFKA_SSL_CA
                   optional: true
+            # Valkey auth/TLS for a managed Redis (Aiven). All optional:true so the app
+            # still boots against the plaintext in-cluster redis:7-alpine, where
+            # buildRedisConnectionOptions stays an empty overlay when these are unset.
+            # The endpoint host:port is REDIS_URL (plain value above); use rediss:// there.
+            - name: REDIS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: REDIS_USERNAME
+                  optional: true
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: REDIS_PASSWORD
+                  optional: true
+            - name: REDIS_TLS_CA
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: REDIS_TLS_CA
+                  optional: true
             {{- end }}
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}

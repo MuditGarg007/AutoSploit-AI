@@ -70,6 +70,12 @@ probes:
 # the orchestration layer and ops own those (§8.2).
 external:
   postgresUrl: postgres://postgres@postgres:5432/control_plane
+  # Local/default is the in-cluster redis:7-alpine. For a managed Valkey (Aiven) set
+  # per-deploy to the rediss:// endpoint, e.g.
+  #   --set external.redisUrl=rediss://<svc>-<proj>.aivencloud.com:<port>
+  # Auth/TLS creds (REDIS_PASSWORD/REDIS_TLS_CA, optional REDIS_USERNAME) come from
+  # control-plane-secrets. Unlike kafkaBrokers this must stay non-empty — an empty
+  # URL leaves BullMQ with no connection and stalls the worker.
   redisUrl: redis://redis:6379
   # Set per-deploy to the Aiven SASL host:port, e.g.
   # --set external.kafkaBrokers=<svc>-<proj>.aivencloud.com:<port>

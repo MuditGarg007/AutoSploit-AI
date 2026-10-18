@@ -11,6 +11,13 @@ export class EnvService {
   // Optional until P3 — nothing uses Redis before BullMQ (dispatch) + the SSE
   // last-mile land. Falls back to the local default so P0 dev/CI needs no fake var.
   readonly redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
+  // Auth/TLS for a managed Valkey (Aiven). All empty = plaintext, which preserves
+  // local dev / self-hosted redis:7-alpine. Password + CA presence turns the overlay
+  // on (see redis/redis-connection.ts). The endpoint host:port lives in REDIS_URL;
+  // use the rediss:// scheme there for TLS.
+  readonly redisUsername = process.env.REDIS_USERNAME ?? '';
+  readonly redisPassword = process.env.REDIS_PASSWORD ?? '';
+  readonly redisTlsCa = process.env.REDIS_TLS_CA ?? '';
 
   // --- Lifecycle (slice C, P3) — BullMQ dispatch + conductor worker ---
   // The conductor CLI the worker shells for Phase A; the control plane never

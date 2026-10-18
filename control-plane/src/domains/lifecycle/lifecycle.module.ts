@@ -10,6 +10,7 @@ import { EngagementStateMachine } from './state-machine/state-machine.js';
 import { EngagementWorker } from './worker/engagement.worker.js';
 import { IngestRelay } from './worker/ingest-relay.js';
 import { engagementQueueProvider } from './queue/engagement-queue.js';
+import { buildRedisConnectionOptions } from '../../redis/redis-connection.js';
 
 // Owns the BullMQ Worker lifecycle: created once per app, closed on shutdown
 // (mirrors DrizzlePoolShutdown in db/drizzle.module.ts).
@@ -46,7 +47,17 @@ export class EngagementWorkerLifecycle implements OnApplicationShutdown {
         new Worker(
           'engagements',
           (job) => worker.process(job),
-          { connection: { url: env.redisUrl }, concurrency: env.workerConcurrency },
+          {
+            // maxRetriesPerRequest:null is required for BullMQ's blocking commands
+            // over a TLS/latent managed link (Aiven Valkey); the overlay carries
+            // auth/TLS when set, empty for the plaintext local path.
+            connection: {
+              url: env.redisUrl,
+              ...buildRedisConnectionOptions(env),
+              maxRetriesPerRequest: null,
+            },
+            concurrency: env.workerConcurrency,
+          },
         ),
     },
     EngagementWorkerLifecycle,

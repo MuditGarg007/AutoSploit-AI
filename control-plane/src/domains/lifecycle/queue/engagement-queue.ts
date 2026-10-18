@@ -1,5 +1,6 @@
 import { Queue } from 'bullmq';
 import { EnvService } from '../../../config/env.service.js';
+import { buildRedisConnectionOptions } from '../../../redis/redis-connection.js';
 
 // BullMQ wiring for dispatch → worker. `bullmq` + `ioredis` are already in
 // package.json but unused until P3; we wire the queue manually (no @nestjs/bullmq)
@@ -33,7 +34,13 @@ export const engagementQueueProvider = {
   inject: [EnvService],
   useFactory: (env: EnvService): Queue<EngagementJobData> =>
     new Queue<EngagementJobData>('engagements', {
-      connection: { url: env.redisUrl },
+      // maxRetriesPerRequest:null is required for BullMQ's blocking commands over a
+      // TLS/latent managed link (Aiven Valkey); the overlay carries auth/TLS when set.
+      connection: {
+        url: env.redisUrl,
+        ...buildRedisConnectionOptions(env),
+        maxRetriesPerRequest: null,
+      },
       defaultJobOptions: {
         attempts: 1, // one run per engagement; retries are a Lifecycle decision
         removeOnComplete: 100,
