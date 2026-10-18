@@ -70,7 +70,7 @@ re-applying the full set through `kubectl apply`:
 
 ```sh
 # ca.pem is the file downloaded in step 1.4; run from where it sits.
-kubectl -n control-plane create secret generic control-plane-secrets \
+kubectl -n autosploit-system create secret generic control-plane-secrets \
   --from-literal=KAFKA_SASL_MECHANISM=scram-sha-256 \
   --from-literal=KAFKA_USERNAME='<aiven-user>' \
   --from-literal=KAFKA_PASSWORD='<aiven-password>' \
@@ -81,7 +81,7 @@ kubectl -n control-plane create secret generic control-plane-secrets \
 > Note: `create ... --dry-run=client | apply` patches only the keys named here; the
 > existing app secrets (`INGEST_TOKEN_SIGNING_KEY`, `JWT_*`, `GITHUB_*`, `VAULT_*`,
 > `OPENROUTER_API_KEY`) are preserved by `apply`'s merge. Confirm afterwards:
-> `kubectl -n control-plane get secret control-plane-secrets -o jsonpath='{.data}' | tr ',' '\n'`
+> `kubectl -n autosploit-system get secret control-plane-secrets -o jsonpath='{.data}' | tr ',' '\n'`
 > should list all keys, old and new.
 
 ### 5. Deploy
@@ -90,7 +90,7 @@ Helm rev bump, pointing the broker at Aiven and capping partitions. Keep Redpand
 
 ```sh
 helm upgrade --install control-plane deploy/helm/control-plane \
-  --namespace control-plane \
+  --namespace autosploit-system \
   --set external.kafkaBrokers='<aiven-sasl-host>:<sasl-port>' \
   --set external.schemaRegistryUrl='' \
   --set env.KAFKA_PARTITIONS=2 \
