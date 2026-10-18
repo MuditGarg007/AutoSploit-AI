@@ -64,8 +64,20 @@ spec:
               value: {{ $v | quote }}
             {{- end }}
             # External dependency endpoints.
+            # DATABASE_URL: the Neon (or any managed) connection string carries a
+            # password inline, so when databaseUrlFromSecret is set it is sourced
+            # from control-plane-secrets instead of being inlined in Helm values.
+            # Default (toggle off) keeps the password-less in-cluster URL as a plain
+            # value, so dev/tests/local boot unchanged.
             - name: DATABASE_URL
+            {{- if .Values.external.databaseUrlFromSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRef.name }}
+                  key: DATABASE_URL
+            {{- else }}
               value: {{ required ".Values.external.postgresUrl is required" .Values.external.postgresUrl | quote }}
+            {{- end }}
             - name: REDIS_URL
               value: {{ required ".Values.external.redisUrl is required" .Values.external.redisUrl | quote }}
             - name: KAFKA_BROKERS

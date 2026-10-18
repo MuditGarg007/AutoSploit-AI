@@ -45,8 +45,19 @@ spec:
           # dist/db/migrate.js and its sibling dist/db/migrations resolve.
           command: ["node", "dist/db/migrate.js"]
           env:
+            # Same DATABASE_URL source as the app Deployment: from the secret when
+            # databaseUrlFromSecret is set (managed Neon, password inline), else the
+            # plain in-cluster URL. The pre-upgrade hook must reach the SAME database
+            # the app will, so a Neon cutover migrates Neon before the app rolls.
             - name: DATABASE_URL
+            {{- if .Values.external.databaseUrlFromSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRef.name }}
+                  key: DATABASE_URL
+            {{- else }}
               value: {{ required ".Values.external.postgresUrl is required" .Values.external.postgresUrl | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.migrations.resources | nindent 12 }}
 {{- end }}

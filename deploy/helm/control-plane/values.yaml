@@ -69,7 +69,18 @@ probes:
 # `--set external.*`. Subcharts for stateful deps are intentionally OUT of scope here —
 # the orchestration layer and ops own those (§8.2).
 external:
+  # Local/default is the in-cluster postgres:16-alpine (password-less trust auth),
+  # carried as a plain value. For a managed Postgres (Neon) the connection string
+  # carries a password inline, so DON'T put it here — set databaseUrlFromSecret=true
+  # and store the full string in the DATABASE_URL key of control-plane-secrets:
+  #   --set external.databaseUrlFromSecret=true
+  #   kubectl create secret generic control-plane-secrets \
+  #     --from-literal=DATABASE_URL='postgres://<user>:<pw>@<host>/<db>?sslmode=require' ...
+  # Neon requires TLS on a publicly-trusted CA — `?sslmode=require` in the URL is
+  # honored by node-postgres, no CA pinning needed. Never run a keep-alive ping
+  # against Neon (compute-hour metered — pinging drains the budget and hard-suspends).
   postgresUrl: postgres://postgres@postgres:5432/control_plane
+  databaseUrlFromSecret: false
   # Local/default is the in-cluster redis:7-alpine. For a managed Valkey (Aiven) set
   # per-deploy to the rediss:// endpoint, e.g.
   #   --set external.redisUrl=rediss://<svc>-<proj>.aivencloud.com:<port>
