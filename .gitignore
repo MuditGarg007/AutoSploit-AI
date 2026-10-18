@@ -23,3 +23,6 @@ __pycache__/
 # Claude Code agent instructions (local only, not shared on remote)
 CLAUDE.md
 **/CLAUDE.md
+
+# Aiven managed-service credentials — never commit
+avien-redis.txt
