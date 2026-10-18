@@ -88,7 +88,18 @@ Frontend is already on Vercel — not on the VPS.
   (libsodium/age with a data key in a k8s Secret), or cloud KMS (AWS/GCP) as a
   managed Transit-equivalent — cheap (~$1/key/month), not free. Not worth it now.
 
-### 4. Redis / BullMQ → Aiven free Valkey  ✅ DO (vendor chosen: Aiven, not Upstash)
+### 4. Redis / BullMQ → Aiven free Valkey  ✅ DONE + LIVE 2026-10-18 (helm rev 34)
+- Live against `rediss://autosploit-redis-muditgarg-51da.e.aivencloud.com:26863`. BullMQ
+  Queue + Worker confirmed connected (`bull:engagements:meta` + `:stalled-check` on Valkey);
+  independence proven (scaled in-cluster redis to 0, no app impact). In-cluster `redis`
+  Deployment/Service deleted; `deploy/vps/deps-redis.yaml` removed. Runbook +
+  what-actually-happened: `docs/vps-aiven-valkey-migration.md`.
+- Two deltas vs. the plan below: **no `REDIS_TLS_CA`** (Aiven serves a Let's Encrypt cert →
+  public root, `rediss://` verifies against system store); Secret edited with
+  `kubectl patch --type=merge` **not** `apply` (apply pruned `GITHUB_CLIENT_*` via a stale
+  `last-applied-configuration`; annotation since stripped).
+
+(original plan:) vendor chosen: Aiven, not Upstash
 - Redis is only 256Mi, so this is a **reliability** play, not a RAM play — it
   kills the "engagements hang when Redis vanishes" failure class and lets the
   queue survive a node wipe.

@@ -1,5 +1,18 @@
 # VPS migration runbook — Redis: in-cluster redis:7-alpine → Aiven free managed Valkey
 
+> **Status: DONE + LIVE 2026-10-18** (helm rev 34). The plane runs against the Aiven
+> Valkey endpoint; the in-cluster `redis` Deployment/Service are deleted and
+> `deploy/vps/deps-redis.yaml` is removed. BullMQ Queue + Worker confirmed connected
+> (`bull:engagements:meta` + `:stalled-check` present on Valkey); independence proven by
+> scaling the old redis to 0 with no app impact. This runbook is kept for reference +
+> rollback. Two corrections vs. the original plan are folded in below: **(1)** Aiven
+> Valkey free presents a **Let's Encrypt** cert (chains to the public ISRG root), so
+> `rediss://` verifies against system roots and **no `REDIS_TLS_CA` is needed**; the env
+> is kept only for a future private-CA provider. **(2)** merge the Secret with
+> `kubectl patch --type=merge`, **not** `create --dry-run | apply` — `apply` pruned
+> `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` (they were in the secret's stale
+> `last-applied-configuration`); the annotation has since been stripped.
+
 Moves BullMQ's dispatch queue + the telemetry SSE/quota cache off the in-cluster
 `redis:7-alpine` pod onto Aiven's free managed Valkey. Redis is only `256Mi`, so this is a
 **reliability** move, not a RAM move: it lets the queue survive a node wipe and kills the
@@ -13,12 +26,17 @@ running until Valkey is proven green — a one-flag rollback the whole way.
 ## Auth model
 
 Aiven Valkey requires TLS plus authentication. The endpoint host:port lives in `REDIS_URL`
-using the **`rediss://`** scheme (TLS). The password and the project CA cert — plus an
-optional username — are injected from the `control-plane-secrets` Secret as
-`REDIS_PASSWORD`, `REDIS_TLS_CA`, `REDIS_USERNAME` (each `optional: true` so the app still
-boots on the plaintext in-cluster redis). When all three are unset,
+using the **`rediss://`** scheme (TLS). The password — plus an optional username — is
+injected from the `control-plane-secrets` Secret as `REDIS_PASSWORD` (and `REDIS_USERNAME`;
+`default` is implicit so it is normally omitted). Each is `optional: true` so the app still
+boots on the plaintext in-cluster redis. When all creds are unset,
 `buildRedisConnectionOptions` returns an empty overlay and the client stays plaintext, so
 local dev and any leftover `redis:7-alpine` keep working unchanged.
+
+**No CA needed for Aiven.** Aiven Valkey free presents a **Let's Encrypt** server cert that
+chains to the public ISRG root, so `rediss://` verifies against Node's system trust store
+with no `REDIS_TLS_CA`. The `REDIS_TLS_CA` env (→ `tls.ca`, `rejectUnauthorized: true`) is
+kept only for a future provider that uses a private CA.
 
 `REDIS_PASSWORD` present → authenticated; `REDIS_TLS_CA` present → TLS verification pinned
 to Aiven's private CA (`rejectUnauthorized: true`). Auth/TLS turn on by credential
@@ -45,7 +63,8 @@ connection and stalls the worker. So the local default `redis://redis:6379` stay
 1. Aiven console → create a **Valkey** service on the **free** plan. No card, no time limit.
 2. From the service overview, note the **host:port** and the **password** (and username,
    usually `default`).
-3. Download the project **CA certificate** (`ca.pem`) — "CA Certificate" on the overview.
+3. No CA download needed — the service cert is Let's Encrypt (public root). See the
+   "No CA needed" note under Auth model.
 
 ### 2. Set up an external keep-alive (off the VPS) — only if the worker can idle
 
@@ -58,23 +77,26 @@ up. Only if engagements are rare enough that the worker can be idle for long str
 ### 3. Load credentials into the Secret (on the VPS)
 
 The `control-plane-secrets` Secret is created imperatively (there is no `kind: Secret` in
-the repo). Merge the Valkey keys in **without clobbering** existing keys by re-applying
-through `kubectl apply`:
+the repo). Add the password with a **strategic merge patch** — `kubectl patch --type=merge`
+never prunes existing keys:
 
 ```sh
-# ca.pem is the file downloaded in step 1.3; run from where it sits.
-# REDIS_USERNAME only if Aiven uses a non-default user.
-kubectl -n autosploit-system create secret generic control-plane-secrets \
-  --from-literal=REDIS_PASSWORD='<aiven-password>' \
-  --from-file=REDIS_TLS_CA=ca.pem \
-  --dry-run=client -o yaml | kubectl apply -f -
+# Base64 is JSON-safe, so inline it into the merge patch.
+PW=$(printf '%s' '<aiven-password>' | base64 -w0)
+kubectl -n autosploit-system patch secret control-plane-secrets --type=merge \
+  -p "{\"data\":{\"REDIS_PASSWORD\":\"$PW\"}}"
 ```
 
-> Note: `create ... --dry-run=client | apply` patches only the keys named here; the
-> existing app secrets (`INGEST_TOKEN_SIGNING_KEY`, `JWT_*`, `GITHUB_*`, `VAULT_*`,
-> `KAFKA_*`, `OPENROUTER_API_KEY`) are preserved by `apply`'s merge. Confirm afterwards:
-> `kubectl -n autosploit-system get secret control-plane-secrets -o jsonpath='{.data}' | tr ',' '\n'`
-> should list all keys, old and new.
+> **Do NOT use `kubectl create --dry-run | kubectl apply` here.** During this migration
+> that pattern *pruned* `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET`: they were present in the
+> secret's `kubectl.kubernetes.io/last-applied-configuration` annotation, so `apply`
+> computed them as removed when the applied config named only the new key. (Keys added by
+> `create` — `KAFKA_*`, `VAULT_*`, etc. — survived because they were never in last-applied.)
+> The annotation has since been stripped (`kubectl annotate secret control-plane-secrets
+> kubectl.kubernetes.io/last-applied-configuration-`), but prefer `patch --type=merge`
+> regardless. Confirm afterwards (expect 14 keys incl. `GITHUB_CLIENT_ID`,
+> `GITHUB_CLIENT_SECRET`, `REDIS_PASSWORD`):
+> `kubectl -n autosploit-system get secret control-plane-secrets -o json | python3 -c 'import sys,json;print(sorted(json.load(sys.stdin)["data"]))'`
 
 ### 4. Deploy
 
