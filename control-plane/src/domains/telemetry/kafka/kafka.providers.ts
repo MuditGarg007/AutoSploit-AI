@@ -12,13 +12,37 @@ export const KAFKA_ADMIN = Symbol('KAFKA_ADMIN');
 // TelemetryModule), so a broker down at boot is a request-time failure, not a
 // boot-time one.
 
-function kafkaFactory(env: EnvService): Kafka | null {
+// Pure config builder — exported for unit testing (the constructed Kafka hides its
+// config). Returns null when no broker is configured. Managed brokers (Aiven) require
+// TLS + SASL; all auth env unset = plaintext, which preserves local dev / self-hosted
+// Redpanda. A CA pins verification to the broker's private CA; with a SASL mechanism
+// but no CA, TLS still rides on against system roots.
+export function buildKafkaConfig(env: EnvService): KafkaConfig | null {
   if (!env.kafkaBrokers) return null;
   const config: KafkaConfig = {
     clientId: env.kafkaClientId,
     brokers: env.kafkaBrokers.split(',').map((b) => b.trim()),
   };
-  return new Kafka(config);
+  if (env.kafkaSslCa) {
+    config.ssl = { ca: [env.kafkaSslCa], rejectUnauthorized: true };
+  } else if (env.kafkaSaslMechanism) {
+    config.ssl = true;
+  }
+  if (env.kafkaSaslMechanism) {
+    // kafkajs types sasl as a discriminated union keyed on mechanism; a runtime string
+    // can't narrow to one branch, so assert against the field's declared type.
+    config.sasl = {
+      mechanism: env.kafkaSaslMechanism,
+      username: env.kafkaUsername,
+      password: env.kafkaPassword,
+    } as KafkaConfig['sasl'];
+  }
+  return config;
+}
+
+function kafkaFactory(env: EnvService): Kafka | null {
+  const config = buildKafkaConfig(env);
+  return config ? new Kafka(config) : null;
 }
 
 function kafkaOrNull(env: EnvService): Kafka {

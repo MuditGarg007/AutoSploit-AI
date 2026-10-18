@@ -152,6 +152,33 @@ spec:
                   name: {{ .name }}
                   key: VAULT_TOKEN
                   optional: true
+            # Kafka SASL/SCRAM + TLS for a managed broker (Aiven). All optional:true so
+            # the app still boots with a plaintext broker (local / self-hosted Redpanda),
+            # where the kafkaFactory stays plaintext when these are unset.
+            - name: KAFKA_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: KAFKA_SASL_MECHANISM
+                  optional: true
+            - name: KAFKA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: KAFKA_USERNAME
+                  optional: true
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: KAFKA_PASSWORD
+                  optional: true
+            - name: KAFKA_SSL_CA
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: KAFKA_SSL_CA
+                  optional: true
             {{- end }}
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}

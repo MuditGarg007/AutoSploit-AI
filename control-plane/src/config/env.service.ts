@@ -94,8 +94,18 @@ export class EnvService {
   readonly schemaRegistryUrl = process.env.SCHEMA_REGISTRY_URL ?? '';
   readonly kafkaTopic = process.env.KAFKA_TOPIC ?? 'autosploit.events';
   readonly kafkaClientId = process.env.KAFKA_CLIENT_ID ?? 'control-plane';
-  // Fixed partition count; key = engagement_id preserves per-engagement order.
-  readonly kafkaPartitions = 3;
+  // Partition count; key = engagement_id preserves per-engagement order regardless
+  // of the count. Configurable because managed brokers cap it (Aiven free = 2).
+  readonly kafkaPartitions = Number(process.env.KAFKA_PARTITIONS ?? 3);
+  // SASL/TLS auth for managed brokers (Aiven). All empty = plaintext, which keeps
+  // local dev / Testcontainers / self-hosted Redpanda working unchanged. When
+  // kafkaSaslMechanism is set, TLS is turned on automatically (see kafka.providers).
+  readonly kafkaSaslMechanism = process.env.KAFKA_SASL_MECHANISM ?? '';
+  readonly kafkaUsername = process.env.KAFKA_USERNAME ?? '';
+  readonly kafkaPassword = process.env.KAFKA_PASSWORD ?? '';
+  // Broker CA cert (PEM). Managed providers use a private CA; empty = verify against
+  // system roots (ssl:true) when a SASL mechanism is set, else plaintext.
+  readonly kafkaSslCa = process.env.KAFKA_SSL_CA ?? '';
   // S3 object store (Kafka Connect S3 sink writes archives; Reports slice E reads
   // artifacts + mints presigned download URLs, §8.2, §4.E). The Connect worker
   // reads these at config time; Reports's own S3 client reads them at boot.

@@ -71,8 +71,13 @@ probes:
 external:
   postgresUrl: postgres://postgres@postgres:5432/control_plane
   redisUrl: redis://redis:6379
-  kafkaBrokers: redpanda:9092
-  schemaRegistryUrl: http://redpanda:8081
+  # Set per-deploy to the Aiven SASL host:port, e.g.
+  # --set external.kafkaBrokers=<svc>-<proj>.aivencloud.com:<port>
+  # Empty disables the broker (ingest returns 503); SASL/TLS creds come from
+  # control-plane-secrets (KAFKA_USERNAME/PASSWORD/SASL_MECHANISM/SSL_CA).
+  kafkaBrokers: ""
+  # Schema Registry (Karapace) is unused — pipeline is plain JSON. Keep empty.
+  schemaRegistryUrl: ""
   vaultAddr: http://vault:8200
   s3Endpoint: http://minio:9000
   s3Bucket: autosploit-reports
