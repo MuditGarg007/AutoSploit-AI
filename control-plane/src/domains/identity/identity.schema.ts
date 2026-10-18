@@ -36,7 +36,21 @@ export const githubTokens = pgTable('github_tokens', {
   userId: uuid('user_id')
     .primaryKey()
     .references(() => users.id),
-  // Vault Transit ciphertext (vault:v1:...). The key never enters the app.
+  // Vault Transit ciphertext (vault:v1:...) of the GitHub access token. The key
+  // never enters the app.
   ciphertext: text('ciphertext').notNull(),
+  // Vault ciphertext of the GitHub refresh token, when the OAuth app issues
+  // expiring user tokens (GitHub App with "expire user tokens" on). NULL for a
+  // classic OAuth App / non-expiring token, in which case the access token above
+  // is used as-is and never refreshed. Refreshing rotates BOTH tokens, so this
+  // column is rewritten on every refresh.
+  refreshCiphertext: text('refresh_ciphertext'),
+  // When the access token (ciphertext) expires. NULL = non-expiring token, so
+  // getGithubToken returns it without a refresh. Set from the exchange/refresh
+  // `expires_in`, minus a safety skew so we refresh just before GitHub rejects.
+  accessExpiresAt: timestamp('access_expires_at'),
+  // When the refresh token itself expires (GitHub `refresh_token_expires_in`,
+  // ~6 months). Past this, no refresh is possible and the user must re-login.
+  refreshExpiresAt: timestamp('refresh_expires_at'),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

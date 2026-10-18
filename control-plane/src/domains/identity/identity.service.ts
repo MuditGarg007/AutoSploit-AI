@@ -20,6 +20,18 @@ export interface IssuedSession {
   user: SessionUser;
 }
 
+// Refresh the GitHub access token this many seconds BEFORE it actually expires,
+// so a request that reads the token never races the hard expiry boundary.
+const GITHUB_TOKEN_SKEW_SEC = 120;
+
+// GitHub's token endpoint response for a code exchange or a refresh_token grant.
+interface GithubTokenGrant {
+  accessToken: string;
+  refreshToken?: string;
+  accessExpiresAt: Date | null;
+  refreshExpiresAt: Date | null;
+}
+
 // Sole writer of users / sessions / github_tokens (docs/control-plane.md §4.A).
 // Token writes go through VaultService first so only ciphertext reaches Postgres
 // (§12 gate A). Refresh tokens are stored as keyed HMAC-SHA256 (peppered with
@@ -39,8 +51,23 @@ export class IdentityService {
     githubId: string;
     login: string;
     githubToken: string;
+    // Present only when the OAuth app issues expiring user tokens (GitHub App
+    // with token expiration). Absent → non-expiring token, stored as-is.
+    refreshToken?: string;
+    expiresInSec?: number;
+    refreshExpiresInSec?: number;
   }): Promise<IssuedSession> {
     const ciphertext = await this.vault.encrypt(input.githubToken);
+    const refreshCiphertext = input.refreshToken
+      ? await this.vault.encrypt(input.refreshToken)
+      : null;
+    const now = Date.now();
+    const accessExpiresAt =
+      input.expiresInSec != null ? new Date(now + input.expiresInSec * 1000) : null;
+    const refreshExpiresAt =
+      input.refreshExpiresInSec != null
+        ? new Date(now + input.refreshExpiresInSec * 1000)
+        : null;
 
     const user = await this.db.transaction(async (tx) => {
       const existing = await tx
@@ -65,10 +92,22 @@ export class IdentityService {
       }
       await tx
         .insert(githubTokens)
-        .values({ userId: record.id, ciphertext })
+        .values({
+          userId: record.id,
+          ciphertext,
+          refreshCiphertext,
+          accessExpiresAt,
+          refreshExpiresAt,
+        })
         .onConflictDoUpdate({
           target: githubTokens.userId,
-          set: { ciphertext, updatedAt: new Date() },
+          set: {
+            ciphertext,
+            refreshCiphertext,
+            accessExpiresAt,
+            refreshExpiresAt,
+            updatedAt: new Date(),
+          },
         });
       return record;
     });
@@ -167,13 +206,98 @@ export class IdentityService {
   // vault entry still goes through A alone; no other slice queries github_tokens
   // (docs/control-plane.md §4.A, §5 rule 1).
   async getGithubToken(userId: string): Promise<string | null> {
-    const row = await this.db
-      .select()
-      .from(githubTokens)
-      .where(eq(githubTokens.userId, userId))
-      .limit(1);
-    if (!row[0]) return null;
-    return this.vault.decrypt(row[0].ciphertext);
+    const row = (
+      await this.db
+        .select()
+        .from(githubTokens)
+        .where(eq(githubTokens.userId, userId))
+        .limit(1)
+    )[0];
+    if (!row) return null;
+
+    // Non-expiring token (classic OAuth App) or no refresh material: the stored
+    // access token is good forever — use it as today.
+    if (!row.accessExpiresAt || !row.refreshCiphertext) {
+      return this.vault.decrypt(row.ciphertext);
+    }
+
+    // Still valid (with skew so we never hand out a token about to be rejected).
+    if (row.accessExpiresAt.getTime() - GITHUB_TOKEN_SKEW_SEC * 1000 > Date.now()) {
+      return this.vault.decrypt(row.ciphertext);
+    }
+
+    // Access token expired/expiring. If the refresh token is itself dead, the
+    // user must re-login (fail-closed → caller maps missing token to 401).
+    if (row.refreshExpiresAt && row.refreshExpiresAt.getTime() <= Date.now()) {
+      return null;
+    }
+
+    const refreshToken = await this.vault.decrypt(row.refreshCiphertext);
+    const grant = await this.refreshGithubToken(refreshToken);
+    if (!grant) return null; // refresh rejected → re-login
+
+    await this.persistGithubGrant(userId, grant);
+    return grant.accessToken;
+  }
+
+  // Exchange a refresh token for a fresh access+refresh pair (GitHub rotates both
+  // on every refresh). Fail-closed: any transport error or error body yields null
+  // so the caller treats the token as gone and prompts a re-login, rather than
+  // throwing and 500-ing the whole request.
+  private async refreshGithubToken(refreshToken: string): Promise<GithubTokenGrant | null> {
+    let res: Response;
+    try {
+      res = await fetch('https://github.com/login/oauth/access_token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          client_id: this.env.githubClientId,
+          client_secret: this.env.githubClientSecret,
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+        }),
+      });
+    } catch {
+      return null;
+    }
+    if (!res.ok) return null;
+    // GitHub returns HTTP 200 with an `error` field (e.g. "bad_refresh_token")
+    // on a dead/rotated refresh token, so the access_token presence is the real
+    // success signal.
+    const body = (await res.json().catch(() => null)) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      refresh_token_expires_in?: number;
+    } | null;
+    if (!body?.access_token) return null;
+
+    const now = Date.now();
+    return {
+      accessToken: body.access_token,
+      refreshToken: body.refresh_token,
+      accessExpiresAt: body.expires_in != null ? new Date(now + body.expires_in * 1000) : null,
+      refreshExpiresAt:
+        body.refresh_token_expires_in != null
+          ? new Date(now + body.refresh_token_expires_in * 1000)
+          : null,
+    };
+  }
+
+  // Persist a refreshed grant back to github_tokens. Keeps the prior refresh
+  // ciphertext/expiry when GitHub omits a new one (it normally rotates both).
+  private async persistGithubGrant(userId: string, grant: GithubTokenGrant): Promise<void> {
+    const ciphertext = await this.vault.encrypt(grant.accessToken);
+    const set: Record<string, unknown> = {
+      ciphertext,
+      accessExpiresAt: grant.accessExpiresAt,
+      updatedAt: new Date(),
+    };
+    if (grant.refreshToken) {
+      set.refreshCiphertext = await this.vault.encrypt(grant.refreshToken);
+      set.refreshExpiresAt = grant.refreshExpiresAt;
+    }
+    await this.db.update(githubTokens).set(set).where(eq(githubTokens.userId, userId));
   }
 
   async getUserBySession(sessionId: string): Promise<SessionUser | null> {

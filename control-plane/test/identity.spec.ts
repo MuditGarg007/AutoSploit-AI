@@ -15,11 +15,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AppModule } from '../src/app.module.js';
 import { VaultService } from '../src/domains/identity/vault/vault.service.js';
+import { IdentityService } from '../src/domains/identity/identity.service.js';
 
 const { Pool } = pkg;
 
 const GITHUB_USER = { id: 12345, login: 'alice' };
 const GITHUB_TOKEN = 'ghp_fake_github_access_token_1234567890abcdef';
+// What the mock GitHub returns from a refresh_token grant — distinct from the
+// initial exchange token so the refresh test can tell them apart.
+const REFRESHED_TOKEN = 'ghu_fake_refreshed_access_token_abcdef1234567890';
 
 // fastify inject returns set-cookie as an array when multiple cookies are set;
 // join them so the assertions below read them as one string.
@@ -76,9 +80,22 @@ describe('Identity (A) — OAuth round-trip against real Postgres + Vault', () =
 
     // --- mock GitHub (the one external call; CI can't hit GitHub) ---
     // POST /login/oauth/access_token → token; GET /user → profile.
-    fetchSpy.mockImplementation(async (url: string) => {
+    fetchSpy.mockImplementation(async (url: string, init?: { body?: string }) => {
       if (url === 'https://github.com/login/oauth/access_token') {
-        return { ok: true, json: async () => ({ access_token: GITHUB_TOKEN }) };
+        const body = init?.body ? (JSON.parse(init.body) as { grant_type?: string }) : {};
+        // A refresh_token grant returns a fresh, rotated pair; the initial code
+        // exchange returns the first pair. Both carry expires_in so the stored
+        // token is treated as expiring (the GitHub App path).
+        const isRefresh = body.grant_type === 'refresh_token';
+        return {
+          ok: true,
+          json: async () => ({
+            access_token: isRefresh ? REFRESHED_TOKEN : GITHUB_TOKEN,
+            refresh_token: isRefresh ? 'ghr_refreshed' : 'ghr_initial',
+            expires_in: 28800, // 8h
+            refresh_token_expires_in: 15724800, // ~6 months
+          }),
+        };
       }
       if (url === 'https://api.github.com/user') {
         return { ok: true, json: async () => GITHUB_USER };
@@ -252,6 +269,41 @@ describe('Identity (A) — OAuth round-trip against real Postgres + Vault', () =
 
     const decrypted = await vaultService.decrypt(rows[0].ciphertext);
     expect(decrypted).toBe(GITHUB_TOKEN);
+  });
+
+  it('getGithubToken refreshes an expired GitHub token and persists the rotated pair', async () => {
+    // Fresh login captures access + refresh + expiry (GitHub App path).
+    await login();
+    const identity = app.get(IdentityService);
+    const pool = new Pool({ connectionString: pg.getConnectionUri() });
+
+    const { rows: before } = await pool.query<{
+      user_id: string;
+      refresh_ciphertext: string | null;
+    }>('SELECT user_id, refresh_ciphertext FROM github_tokens');
+    const userId = before[0].user_id;
+    // The refresh token was captured at exchange (the whole point of the fix).
+    expect(before[0].refresh_ciphertext).toBeTruthy();
+
+    // Force the access token to be past expiry so the next read must refresh.
+    await pool.query(
+      "UPDATE github_tokens SET access_expires_at = now() - interval '5 minutes'",
+    );
+
+    // getGithubToken must refresh via GitHub and hand back the NEW access token,
+    // not throw or return the stale one.
+    const token = await identity.getGithubToken(userId);
+    expect(token).toBe(REFRESHED_TOKEN);
+
+    // The rotated token + a future expiry are persisted, so a subsequent read is
+    // served from storage without another refresh round-trip.
+    const { rows: after } = await pool.query<{
+      ciphertext: string;
+      access_expires_at: Date;
+    }>('SELECT ciphertext, access_expires_at FROM github_tokens');
+    await pool.end();
+    expect(await vaultService.decrypt(after[0].ciphertext)).toBe(REFRESHED_TOKEN);
+    expect(new Date(after[0].access_expires_at).getTime()).toBeGreaterThan(Date.now());
   });
 
   it('fails closed: /me rejects a missing or garbage token (401)', async () => {

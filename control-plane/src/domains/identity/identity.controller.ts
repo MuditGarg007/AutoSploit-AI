@@ -67,11 +67,15 @@ export class IdentityController {
       throw new UnauthorizedException('OAuth state mismatch');
     }
 
-    const { githubId, login, githubToken } = await this.exchangeCode(code);
+    const { githubId, login, githubToken, refreshToken, expiresInSec, refreshExpiresInSec } =
+      await this.exchangeCode(code);
     const session = await this.identity.completeGitHubLogin({
       githubId,
       login,
       githubToken,
+      refreshToken,
+      expiresInSec,
+      refreshExpiresInSec,
     });
 
     res.clearCookie(STATE_COOKIE, { path: '/' });
@@ -163,6 +167,9 @@ export class IdentityController {
     githubId: string;
     login: string;
     githubToken: string;
+    refreshToken?: string;
+    expiresInSec?: number;
+    refreshExpiresInSec?: number;
   }> {
     const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
       method: 'POST',
@@ -174,7 +181,16 @@ export class IdentityController {
       }),
     });
     if (!tokenRes.ok) throw new UnauthorizedException('GitHub token exchange failed');
-    const tokenBody = (await tokenRes.json()) as { access_token?: string };
+    // A GitHub App with expiring user tokens also returns refresh_token +
+    // expires_in + refresh_token_expires_in; a classic OAuth App returns only
+    // access_token. Capturing the former is what lets getGithubToken refresh
+    // the ~8h user token instead of dying with a 401.
+    const tokenBody = (await tokenRes.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      refresh_token_expires_in?: number;
+    };
     if (!tokenBody.access_token) throw new UnauthorizedException('GitHub token exchange failed');
 
     const userRes = await fetch('https://api.github.com/user', {
@@ -187,6 +203,9 @@ export class IdentityController {
       githubId: String(profile.id),
       login: profile.login,
       githubToken: tokenBody.access_token,
+      refreshToken: tokenBody.refresh_token,
+      expiresInSec: tokenBody.expires_in,
+      refreshExpiresInSec: tokenBody.refresh_token_expires_in,
     };
   }
 }

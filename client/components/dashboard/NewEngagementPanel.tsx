@@ -37,6 +37,7 @@ import {
   ApiError,
 } from "@/lib/api";
 import type { Repo } from "@/lib/mock-repos";
+import { signInUrl } from "@/lib/token";
 import { cn } from "@/lib/format";
 import { CheckIcon, SpinnerIcon, BanIcon, SearchIcon, XIcon } from "./icons";
 
@@ -108,6 +109,9 @@ function Picker({ onClose }: { onClose: () => void }) {
 
   const [repos, setRepos] = useState<Repo[] | null>(null);
   const [loadError, setLoadError] = useState(false);
+  // A 401 from /repos means the linked GitHub token is dead (expired/revoked):
+  // offer a reconnect instead of a generic "try again", which would never help.
+  const [needsReconnect, setNeedsReconnect] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
 
@@ -123,7 +127,11 @@ function Picker({ onClose }: { onClose: () => void }) {
     let live = true;
     listRepos()
       .then((rs) => live && setRepos(rs))
-      .catch(() => live && setLoadError(true));
+      .catch((e) => {
+        if (!live) return;
+        if (e instanceof ApiError && e.status === 401) setNeedsReconnect(true);
+        setLoadError(true);
+      });
     searchRef.current?.focus();
     return () => {
       live = false;
@@ -257,9 +265,22 @@ function Picker({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          {loadError && (
+          {loadError && !needsReconnect && (
             <div className="px-5 py-6 text-sm text-muted">
               Could not load your repositories. Close this and try again.
+            </div>
+          )}
+
+          {needsReconnect && (
+            <div className="px-5 py-6 text-sm text-muted">
+              Your GitHub connection expired.{" "}
+              <a
+                href={signInUrl()}
+                className="text-accent hover:text-accent-bright underline underline-offset-2"
+              >
+                Reconnect GitHub
+              </a>{" "}
+              to load your repositories.
             </div>
           )}
 

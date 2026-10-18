@@ -144,13 +144,20 @@ interface ApiRepo {
   name: string;
 }
 
-/** List the user's repos for the picker. Falls back to mock. */
+/**
+ * List the user's repos for the picker. Falls back to mock only when the backend
+ * is UNREACHABLE (local dev with no plane). A reachable backend that answers
+ * non-2xx (notably 401 "GitHub token rejected" after a dead GitHub token) rethrows
+ * the ApiError so the picker can prompt a GitHub reconnect instead of silently
+ * showing fake repos — the symptom that read as "mock data on New Engagement".
+ */
 export async function listRepos(): Promise<Repo[]> {
   if (!base()) return MOCK_REPOS;
   try {
     const rows = await get<ApiRepo[]>("/repos");
     return rows.map((r) => ({ id: r.id, fullName: r.fullName, name: r.name }));
-  } catch {
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
     return MOCK_REPOS;
   }
 }
