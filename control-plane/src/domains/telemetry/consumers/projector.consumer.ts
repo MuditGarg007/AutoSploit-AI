@@ -44,19 +44,28 @@ export class ProjectorConsumer implements OnApplicationBootstrap {
 
   async onApplicationBootstrap(): Promise<void> {
     if (!this.kafka) return;
-    this.consumer = this.kafka.consumer({ groupId: 'autosploit-projector' });
-    this.lifecycle.registerConsumer(this.consumer);
-    await this.consumer.connect();
-    await this.consumer.subscribe({ topic: this.env.kafkaTopic, fromBeginning: true });
-    await this.consumer.run({
-      eachMessage: async (payload) => {
-        try {
-          await this.handle(payload);
-        } catch (err) {
-          this.logger.warn(`projector message failed: ${(err as Error).message}`);
-        }
-      },
+    // restartOnFailure + try/catch keep a broker down (at boot or at runtime) from
+    // escalating to an uncaught KafkaJSNonRetriableError that crashes the process.
+    this.consumer = this.kafka.consumer({
+      groupId: 'autosploit-projector',
+      retry: { restartOnFailure: async () => true },
     });
+    this.lifecycle.registerConsumer(this.consumer);
+    try {
+      await this.consumer.connect();
+      await this.consumer.subscribe({ topic: this.env.kafkaTopic, fromBeginning: true });
+      await this.consumer.run({
+        eachMessage: async (payload) => {
+          try {
+            await this.handle(payload);
+          } catch (err) {
+            this.logger.warn(`projector message failed: ${(err as Error).message}`);
+          }
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`projector consumer start skipped: ${(err as Error).message}`);
+    }
   }
 
   // Public so a replay consumer (D-b test, and any future re-architecture) can

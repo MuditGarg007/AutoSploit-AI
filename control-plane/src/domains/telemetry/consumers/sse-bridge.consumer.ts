@@ -33,19 +33,28 @@ export class SseBridgeConsumer implements OnApplicationBootstrap, OnApplicationS
 
   async onApplicationBootstrap(): Promise<void> {
     if (!this.kafka || !this.redis) return;
-    this.consumer = this.kafka.consumer({ groupId: 'autosploit-sse-bridge' });
-    this.lifecycle.registerConsumer(this.consumer);
-    await this.consumer.connect();
-    await this.consumer.subscribe({ topic: this.env.kafkaTopic, fromBeginning: false });
-    await this.consumer.run({
-      eachMessage: async (payload) => {
-        try {
-          await this.handle(payload);
-        } catch (err) {
-          this.logger.warn(`sse-bridge message failed: ${(err as Error).message}`);
-        }
-      },
+    // restartOnFailure + try/catch keep a broker down (at boot or at runtime) from
+    // escalating to an uncaught KafkaJSNonRetriableError that crashes the process.
+    this.consumer = this.kafka.consumer({
+      groupId: 'autosploit-sse-bridge',
+      retry: { restartOnFailure: async () => true },
     });
+    this.lifecycle.registerConsumer(this.consumer);
+    try {
+      await this.consumer.connect();
+      await this.consumer.subscribe({ topic: this.env.kafkaTopic, fromBeginning: false });
+      await this.consumer.run({
+        eachMessage: async (payload) => {
+          try {
+            await this.handle(payload);
+          } catch (err) {
+            this.logger.warn(`sse-bridge message failed: ${(err as Error).message}`);
+          }
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`sse-bridge consumer start skipped: ${(err as Error).message}`);
+    }
   }
 
   private async handle({ message }: EachMessagePayload): Promise<void> {

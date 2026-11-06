@@ -63,26 +63,39 @@ export class QuotaAggregatorConsumer implements OnApplicationBootstrap {
     // Redis → the meter just stays empty, and the fail-open dispatch path (§3.5)
     // treats an empty meter as under-cap. Never crashes boot.
     if (!this.kafka || !this.redis) return;
-    this.consumer = this.kafka.consumer({ groupId: 'autosploit-quota-aggregator' });
+    // restartOnFailure keeps a runtime broker loss from escalating to an uncaught
+    // KafkaJSNonRetriableError (which crashes the whole process); the try/catch does
+    // the same for a broker that is down at boot. Both are log-only: the meter just
+    // stays empty and the fail-open dispatch path treats it as under-cap (§3.5).
+    this.consumer = this.kafka.consumer({
+      groupId: 'autosploit-quota-aggregator',
+      retry: { restartOnFailure: async () => true },
+    });
     this.lifecycle.registerConsumer(this.consumer);
-    await this.consumer.connect();
-    await this.consumer.subscribe({
-      topic: this.env.kafkaTopic,
-      fromBeginning: true,
-    });
-    await this.consumer.run({
-      eachMessage: async (payload) => {
-        try {
-          await this.handle(payload);
-        } catch (err) {
-          // A bad message never crashes the group.
-          this.logger.warn(
-            `quota-aggregator message failed: ${(err as Error).message}`,
-          );
-        }
-      },
-    });
-    this.logger.log('quota-aggregator consumer started (fromBeginning)');
+    try {
+      await this.consumer.connect();
+      await this.consumer.subscribe({
+        topic: this.env.kafkaTopic,
+        fromBeginning: true,
+      });
+      await this.consumer.run({
+        eachMessage: async (payload) => {
+          try {
+            await this.handle(payload);
+          } catch (err) {
+            // A bad message never crashes the group.
+            this.logger.warn(
+              `quota-aggregator message failed: ${(err as Error).message}`,
+            );
+          }
+        },
+      });
+      this.logger.log('quota-aggregator consumer started (fromBeginning)');
+    } catch (err) {
+      this.logger.warn(
+        `quota-aggregator consumer start skipped: ${(err as Error).message}`,
+      );
+    }
   }
 
   // Public so a replay test can drive the exact production meter write from a
